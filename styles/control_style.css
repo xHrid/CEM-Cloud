@@ -1,0 +1,101 @@
+#controls {
+  position: fixed;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.3);
+
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px); /* For Safari support */
+
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px; /* Optional: Rounded corners */
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  z-index: 1000;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  overflow-y: auto;
+}
+
+
+
+#controls.open {
+  transform: translateX(0);
+}
+
+#menu-toggle {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 1100;
+  background: #333;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#latlon {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  background-color: rgba(0, 0, 0, 0.7); /* semi-transparent black */
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem; /* slightly smaller text */
+  z-index: 1000; /* stay above other elements */
+}
+
+.icon-inline {
+  width: 1.3rem;
+  height: 1.3rem;
+  margin-bottom: 0.6rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.radios_div {
+  display: flex;
+  flex-direction: column;
+  margin-left: 1rem;
+}
+
+#radio-label {
+  margin-top: 1rem;
+}
+
+#controls input[type="radio"] {
+  margin-right: 0.5rem;
+  cursor: pointer;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+#controls input[type="checkbox"] {
+  margin-right: 0.25rem;
+  margin-left: 0.5rem;
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+#controls button {
+  font-size: 1rem;
+  width: 5rem;
+  padding: 0.2rem;
+  border-radius: 0.5rem;
+  border: none;
+  background-color: rgb(0, 255, 110);
+  cursor: pointer;
+}
+
+.div-label {
+  margin-bottom: 0.3rem;
+  margin-top: 1rem;
+  font-weight: bold;
+}
+
+.control {
+  /* padding-left: 2rem; */
+  padding-bottom: 0.5rem;
+}

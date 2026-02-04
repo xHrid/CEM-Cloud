@@ -1,0 +1,367 @@
+#map {
+  height: 100vh;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-size: 1.2rem;
+  font-family: 'Poppins', sans-serif;
+}
+
+/* --- Toast Notification --- */
+#toast-notification {
+  position: fixed;
+  bottom: 20px;
+  right: -300px; /* Start off-screen */
+  width: 280px;
+  padding: 15px;
+  background-color: #333;
+  color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  transition: right 0.5s ease-in-out;
+  z-index: 99999;
+  font-size: 0.95rem;
+}
+
+#toast-notification.show {
+  right: 20px; /* Slide in */
+}
+
+#toast-notification.success {
+  background-color: #28a745;
+}
+
+#toast-notification.failed {
+  background-color: #dc3545;
+}
+
+
+.leaflet-popup-content {
+  min-width: 200px;
+}
+
+#spot-details-menu h2 {
+  margin-top: 0;
+  color: #333;
+}
+
+#spot-details-menu ul {
+  padding-left: 20px;
+}
+
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0,0,0,0.4);
+}
+
+.modal-content {
+  background-color: #fefefe;
+  margin: 15% auto;
+  padding: 20px;
+  border: 1px solid #888;
+  width: 80%;
+  max-width: 400px;
+}
+
+.close {
+  color: #aaa;
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.button-group {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+.button-group * {
+  font-size: 1rem;
+  width: 5rem;
+  padding: 0.2rem;
+  border-radius: 0.5rem;
+  border: none;
+  background-color: rgb(0, 255, 110);
+  cursor: pointer;
+}
+
+.tracking-active {
+  background-color: red;
+  color: white;
+}
+
+
+.save-route-dialog {
+  display: block;
+}
+
+#route-name {
+  width: 100%;
+  padding: 0.2rem;
+  margin: 1rem 0rem;
+  border: 2px solid black;
+}
+
+/* --- Control Panel Button Group Styling --- */
+.add-site-div {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr); /* Two columns */
+    gap: 10px;
+    margin-top: 1rem;
+    width: fit-content;
+}
+
+.add-site-div button, .add-site-div .add_site, .add-site-div .control-button {
+    width: 100%;
+    padding: 10px 5px; /* Vertical and horizontal padding */
+    font-size: 0.9rem; /* Smaller font for a cleaner look */
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background-color: #fff;
+    cursor: pointer;
+    transition: background-color 0.2s, box-shadow 0.2s;
+    text-align: center;
+    box-sizing: border-box; /* Ensures padding is included in width */
+}
+
+.add-site-div button:hover, .add-site-div .add_site:hover, .add-site-div .control-button:hover {
+    background-color: #e9e9e9;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* --- Jobs Popup Styling --- */
+#jobs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px; /* Space between job cards */
+}
+
+.job-item {
+    background-color: #f9f9f9;
+    border: 1px solid #ddd;
+    border-left: 5px solid #007bff; /* Default border color */
+    border-radius: 5px;
+    padding: 15px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap; /* Allow wrapping for smaller screens */
+    gap: 10px;
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.job-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.job-item-info {
+    font-size: 0.9rem;
+    color: #333;
+    line-height: 1.5;
+}
+
+.job-item-info strong {
+    color: #000;
+}
+
+/* Specific border colors for job status */
+.job-item.status-completed { border-left-color: #28a745; }
+.job-item.status-failed { border-left-color: #dc3545; }
+.job-item.status-running { border-left-color: #007bff; }
+.job-item.status-queued { border-left-color: #ffc107; }
+
+
+/* Job Status Badge */
+.job-status {
+    padding: 5px 12px;
+    border-radius: 15px;
+    color: white;
+    font-weight: bold;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.job-status.status-completed { background-color: #28a745; }
+.job-status.status-failed { background-color: #dc3545; }
+.job-status.status-running { background-color: #007bff; }
+.job-status.status-queued { background-color: #ffc107; color: #333;}
+
+/* --- Analysis Form Styling --- */
+#analysis-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+#analysis-script-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    background-color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+#analysis-description {
+    font-size: 0.9rem;
+    color: #666;
+    margin-top: -10px;
+    padding: 10px;
+    border-left: 3px solid #007bff;
+    background-color: #f4f4f9;
+    border-radius: 0 5px 5px 0;
+}
+
+#analysis-file-selection {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px;
+    background-color: #fff;
+}
+
+#analysis-file-selection div {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 5px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+#analysis-file-selection div:hover {
+    background-color: #f0f8ff; /* Light blue on hover */
+}
+
+#analysis-file-selection input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: #0cff49;
+}
+
+#analysis-file-selection label {
+    font-size: 0.9rem;
+    cursor: pointer;
+    user-select: none;
+    flex-grow: 1;
+}
+
+/* --- Jobs Popup Enhancements --- */
+#refresh-jobs-btn {
+    display: block;
+    margin: 0 auto 15px auto;
+    padding: 8px 20px;
+    font-size: 0.9rem;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.2s;
+}
+
+#refresh-jobs-btn:hover {
+    background-color: #0056b3;
+    transform: scale(1.05);
+}
+
+.job-card {
+    position: relative; /* Needed for positioning the action buttons */
+}
+
+.job-card-actions {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    gap: 5px;
+}
+
+.job-action-btn {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: bold;
+    transition: background-color 0.2s, transform 0.2s;
+}
+
+.job-action-btn:hover {
+    transform: translateY(-1px);
+}
+
+.job-cancel-btn {
+    background-color: #f0ad4e; /* Warning orange */
+    color: white;
+}
+.job-cancel-btn:hover {
+    background-color: #ec971f;
+}
+
+.job-remove-btn {
+    background-color: #d9534f; /* Danger red */
+    color: white;
+    padding: 2px 8px; /* Adjust padding for the 'X' */
+    font-family: 'Courier New', Courier, monospace;
+    line-height: 1.2;
+}
+
+.job-remove-btn:hover {
+    background-color: #c9302c;
+}
+
+/* --- Minimal Scrollbar Styling --- */
+
+/* Works for WebKit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 8px; 
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1; 
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1; 
+  border-radius: 10px; 
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1; 
+}
+
+#controls, 
+.popup-content,
+.modal-content, 
+.import-popup-content, 
+#spot-details-menu, 
+.external-data-list, 
+#analysis-file-selection, 
+#jobs-list, 
+.import-multi-select-box 
+{
+  scrollbar-width: thin;          
+  scrollbar-color: #defdff #ffffff; 
+}
+
+
+.direction-arrow { transform-origin: center; display:flex; align-items:center; justify-content:center; }
+.direction-arrow .arrow-inner { width:36px; height:36px; transform-origin:50% 50%; transition: transform 150ms linear; }

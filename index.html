@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Continuous Ecological Monitoring Toolkit</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+    <link rel="icon" type="image/png" href="/images/assets/favi.png">
+
+    <link rel="stylesheet" href="./styles/control_style.css" />
+    <link rel="stylesheet" href="./styles/spot_popup.css" />
+    <link rel="stylesheet" href="./styles/style.css" />
+    <link rel="stylesheet" href="./styles/details-style.css">
+    <link rel="stylesheet" href="./leaflet/leaflet.css" />
+    <link rel="stylesheet" href="./styles/add_site_section.css" />
+    <link rel="stylesheet" href="./styles/import_media.css" />
+    <link rel="stylesheet" href="./styles/external_data_viewer.css" />
+
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <meta charset="UTF-8"> <title>Continuous Ecological Monitoring Toolkit</title>
+</head>
+
+<body>
+    <main>
+        <button id="menu-toggle">☰</button>
+        <div id="controls" class="open">
+            <div id="auth-section" style="margin-top: 3.5rem;"></div>
+
+            <div class="add-site-div">
+                <button class="add_site">Add Site</button>
+                <button id="import-media-btn" class="control-button">Import</button>
+                <button id="analysis-btn" class="control-button">Analysis</button>
+                <button id="jobs-btn" class="control-button">Jobs</button>
+            </div>
+
+            <div class="control">
+                <div class="div-label">Spots</div>
+                <button id="open-form">Add</button>
+                <label class="spot-toggle">
+                    <input type="checkbox" id="display-spots" /> Show
+                </label>
+            </div>
+            <div class="control">
+                <div class="div-label">Routes</div>
+                <button id="toggle-tracking">Record</button>
+                <label for="show-routes-toggle">
+                    <input type="checkbox" id="show-routes-toggle" /> Show
+                </label>
+            </div>
+            <div id="stratification-controls"></div>
+        </div>
+        <div id="map"></div>
+        <div id="latlon"><label>Lat Long</label></div>
+        <div id="toast-notification"></div>
+    </main>
+
+    <div id="popup-form" class="popup-overlay" style="display: none;">
+        <div class="popup-content">
+            <form id="spot-form">
+                <input type="text" name="name" placeholder="Spot Name" />
+                <input type="text" name="birds" placeholder="Birds Seen" />
+                <textarea name="description" placeholder="Description"></textarea>
+                <div class="media-controls">
+                    <label for="image-upload" class="custom-upload">
+                        <span>📷</span>
+                    </label>
+                    <input type="file" id="image-upload" name="image" accept="image/*" capture="environment"
+                        style="display: none;" />
+                    <label id="audio-toggle" class="custom-upload">
+                        <span>🎤</span>
+                    </label>
+                    <audio id="audioPlayback" controls class="audio-player"></audio>
+                </div>
+                <button type="submit" class="popup-btn">Submit</button>
+                <button type="button" id="close-form" class="popup-btn">Cancel</button>
+            </form>
+            <div id="status"></div>
+        </div>
+    </div>
+
+    <div id="add-site-popup-form" class="popup-overlay" style="display: none;">
+        <div class="popup-content">
+            <form id="add-site-form">
+                <h3>Add New Site</h3>
+                <input type="text" name="siteName" placeholder="Site Name" required />
+                <label for="kml-upload" class="kml-upload-area">
+                    <span id="kml-file-name">Choose KML file...</span>
+                </label>
+                <input type="file" id="kml-upload" name="kml" accept=".kml" required />
+                <select name="clusters" required>
+                    <option value="" disabled selected>Select number of clusters</option>
+                    <option value="2">2 Clusters</option>
+                    <option value="3">3 Clusters</option>
+                </select>
+                <div class="button-group">
+                    <button type="submit" class="popup-btn">Submit</button>
+                    <button type="button" id="close-add-site-form" class="popup-btn cancel-btn">Cancel</button>
+                </div>
+            </form>
+            <div id="add-site-status"></div>
+        </div>
+    </div>
+
+    <div id="save-route-dialog" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Save Route</h3>
+            <form id="route-form">
+                <input type="text" id="route-name" placeholder="Walk Name" />
+                <div class="button-group">
+                    <button type="submit" class="save-btn">Save</button>
+                    <button type="button" class="cancel-btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="import-media-popup" class="import-popup-overlay" style="display: none;">
+        <div class="import-popup-content">
+            <form id="import-media-form" novalidate>
+                <h3>Import External Media</h3>
+                <div id="spot-selection-container" class="import-multi-select-box"></div>
+                <input type="file" id="external-file-input" name="files" class="import-file-input" multiple required>
+                <div class="import-form-actions">
+                    <button type="submit" class="import-action-btn">Import</button>
+                    <button type="button" id="cancel-import-btn" class="import-secondary-action-btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="spot-details-menu">
+        <button id="close-spot-details">x</button>
+        <div id="spot-details-content"></div>
+    </div>
+
+    <div id="external-data-viewer" class="external-data-popup" style="display: none;">
+        <div class="external-data-header">
+            <h3>External Media</h3>
+            <button id="close-external-viewer" class="close-viewer-btn">x</button>
+        </div>
+        <div id="external-data-content" class="external-data-list"></div>
+    </div>
+
+    <div id="analysis-popup" class="import-popup-overlay" style="display: none;">
+        <div class="import-popup-content">
+            <h3>Analysis Feature Pending</h3><button id="cancel-analysis-btn">Close</button>
+        </div>
+    </div>
+    <div id="jobs-popup" class="import-popup-overlay" style="display: none;">
+        <div class="import-popup-content">
+            <h3>Jobs Feature Pending</h3><button id="close-jobs-btn">Close</button>
+        </div>
+    </div>
+
+    <script src="./leaflet/leaflet.js"></script>
+
+    <script type="module" src="./js/app.js"></script>
+    <script type="module" src="./js/map.js"></script>
+    <script type="module" src="./js/route.js"></script>
+    <script type="module" src="./js/spots.js"></script>
+    <script type="module" src="./js/ui.js"></script>
+    <script type="module" src="./js/sites.js"></script>
+    <script type="module" src="./js/analysis.js"></script>
+</body>
+
+</html>

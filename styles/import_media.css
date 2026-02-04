@@ -1,0 +1,127 @@
+.import-popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1050; /* Higher than other popups if needed */
+    font-family: 'Poppins', sans-serif;
+}
+
+.import-popup-content {
+    background-color: #ffffff;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 5px 25px rgba(0, 0, 0, 0.15);
+    width: 90%;
+    max-width: 500px;
+}
+
+.import-popup-content h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 1.5rem;
+    color: #333;
+    font-weight: 600;
+}
+
+.import-form-subtitle {
+    margin-top: 0;
+    margin-bottom: 25px;
+    font-size: 0.95rem;
+    color: #666;
+}
+
+.import-form-label {
+    display: block;
+    text-align: left;
+    font-weight: 500;
+    margin-bottom: 8px;
+    color: #444;
+}
+
+.import-multi-select-box {
+    border: 1px solid #dcdcdc;
+    padding: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.import-multi-select-box label {
+    display: block;
+    margin-bottom: 5px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.import-destination-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 0.5rem;
+}
+
+.import-text-input,
+.import-file-input {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #dcdcdc;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-family: 'Poppins', sans-serif;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background-color: #fdfdfd;
+    box-sizing: border-box;
+    margin-bottom: 1rem;
+}
+
+.import-text-input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+}
+
+.import-path-preview-wrapper {
+    background-color: #f0f0f0;
+    padding: 10px;
+    border-radius: 4px;
+    font-family: monospace;
+    word-wrap: break-word;
+    margin-bottom: 1rem;
+    color: #333;
+    text-align: left;
+}
+
+.import-form-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.import-action-btn,
+.import-secondary-action-btn {
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.1s;
+}
+
+.import-action-btn {
+    background-color: #007bff;
+}
+
+.import-secondary-action-btn {
+    background-color: #6c757d;
+}
