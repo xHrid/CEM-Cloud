@@ -1,5 +1,5 @@
-import { getSpots, saveExternalFile } from './storage.js';
-import { generateSyncReport, syncUp, syncDown } from './media_sync.js';
+import { getSpots, saveExternalFile, resolveMasterConflict } from './storage.js';
+import { generateSyncReport, syncUp, syncDown, syncBatch } from './media_sync.js';
 
 document.addEventListener("DOMContentLoaded", () => {
     const menuToggle = document.getElementById("menu-toggle");
@@ -16,6 +16,38 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setupPopup("open-form", "popup-form", "close-form");
     setupPopup(null, "add-site-popup-form", "close-add-site-form");
+
+    const conflictModal = document.getElementById("conflict-modal");
+    
+    document.addEventListener('master-sync-conflict', (e) => {
+        const { localCount, remoteCount } = e.detail;
+        
+        document.getElementById('conflict-msg').innerHTML = `
+            Master Data mismatch detected.<br>
+            <strong>Local Spots:</strong> ${localCount} <br>
+            <strong>Drive Spots:</strong> ${remoteCount}
+        `;
+        conflictModal.style.display = "flex";
+    });
+
+    document.getElementById('btn-conflict-pull').onclick = () => {
+        resolveMasterConflict('pull');
+        conflictModal.style.display = "none";
+    };
+
+    document.getElementById('btn-conflict-push').onclick = () => {
+        resolveMasterConflict('push');
+        conflictModal.style.display = "none";
+    };
+
+    document.getElementById('btn-conflict-merge').onclick = () => {
+        resolveMasterConflict('merge');
+        conflictModal.style.display = "none";
+    };
+
+    document.getElementById('btn-conflict-cancel').onclick = () => {
+        conflictModal.style.display = "none";
+    };
     
     if(document.querySelector(".add_site")) {
         document.querySelector(".add_site").onclick = () => document.getElementById("add-site-popup-form").style.display = "flex";
@@ -88,6 +120,140 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
+async function runBatchSync(items, direction) {
+    if (!confirm(`Are you sure you want to ${direction} ${items.length} files?`)) return;
+
+    const progressBar = document.getElementById('sync-progress-bar');
+    const progressLabel = document.getElementById('sync-progress-label');
+    const progressContainer = document.getElementById('sync-progress-container');
+    const toolbar = document.getElementById('sync-toolbar');
+
+    toolbar.style.pointerEvents = 'none';
+    toolbar.style.opacity = '0.5';
+    progressContainer.style.display = 'block';
+
+    await syncBatch(items, direction, (percent, currentFile, fails) => {
+        progressBar.style.width = `${percent}%`;
+        progressLabel.textContent = `Processing: ${currentFile.split('/').pop()} (${fails} errors)`;
+    });
+
+    setTimeout(async () => {
+        progressContainer.style.display = 'none';
+        toolbar.style.pointerEvents = 'auto';
+        toolbar.style.opacity = '1';
+        
+        // Refresh
+        const newReport = await generateSyncReport();
+        renderSyncDashboard(newReport);
+        alert(`Batch ${direction} complete.`);
+    }, 500);
+}
+
+function renderSyncDashboard(report) {
+    const container = document.getElementById('sync-list');
+    container.innerHTML = "";
+
+    const groups = { 'Metadata': [], 'Sites': [], 'Spots': {} };
+    const pushList = [];
+    const pullList = [];
+
+    report.forEach(item => {
+        if (item.name === 'master_data.json') {
+            groups.Metadata.push(item);
+        } else if (item.name.startsWith('sites/')) {
+            groups.Sites.push(item);
+        } else if (item.name.startsWith('spots/')) {
+            // Extract Spot Name: spots/SpotName/images/...
+            const parts = item.name.split('/');
+            const spotName = parts[1];
+            if (!groups.Spots[spotName]) groups.Spots[spotName] = [];
+            groups.Spots[spotName].push(item);
+        }
+
+        if (item.isLocal && !item.isDrive) pushList.push(item);
+        if (!item.isLocal && item.isDrive) pullList.push(item);
+    });
+
+    document.getElementById('count-push').textContent = pushList.length;
+    document.getElementById('count-pull').textContent = pullList.length;
+    
+    const btnPush = document.getElementById('btn-push-all');
+    const btnPull = document.getElementById('btn-pull-all');
+    
+    btnPush.disabled = pushList.length === 0;
+    btnPull.disabled = pullList.length === 0;
+    document.getElementById('sync-status-text').textContent = "Ready";
+
+    btnPush.onclick = () => runBatchSync(pushList, 'push');
+    btnPull.onclick = () => runBatchSync(pullList, 'pull');
+
+    const createRow = (item) => {
+        let statusHtml = "";
+        let actionBtn = "";
+
+        if (item.isLocal && item.isDrive) {
+            statusHtml = `<span style="color:green">✅ Synced</span>`;
+        } else if (item.isLocal && !item.isDrive) {
+            statusHtml = `<span style="color:orange">🏠 Local Only</span>`;
+            actionBtn = `<button class="mini-sync-btn" data-action="push" data-name="${item.name}">⬆</button>`;
+        } else if (!item.isLocal && item.isDrive) {
+            statusHtml = `<span style="color:blue">☁️ Drive Only</span>`;
+            actionBtn = `<button class="mini-sync-btn" data-action="pull" data-id="${item.driveId}" data-name="${item.name}">⬇</button>`;
+        }
+
+        const displayName = item.name.split('/').pop();
+
+        return `
+            <div class="sync-row">
+                <div class="sync-file-name" title="${item.name}">${displayName}</div>
+                <div class="sync-status">${statusHtml}</div>
+                <div class="sync-action">${actionBtn}</div>
+            </div>
+        `;
+    };
+
+    if (groups.Metadata.length > 0) {
+        container.innerHTML += `<div class="sync-group-header">📂 System Files</div>`;
+        groups.Metadata.forEach(item => container.innerHTML += createRow(item));
+    }
+
+    if (groups.Sites.length > 0) {
+        container.innerHTML += `<div class="sync-group-header">🗺️ Sites</div>`;
+        groups.Sites.forEach(item => container.innerHTML += createRow(item));
+    }
+
+    Object.keys(groups.Spots).sort().forEach(spotName => {
+        const items = groups.Spots[spotName];
+        const allSynced = items.every(i => i.isLocal && i.isDrive);
+        const color = allSynced ? '#4CAF50' : '#333';
+        
+        container.innerHTML += `<div class="sync-group-header" style="border-left: 4px solid ${color}">📍 ${spotName.replace(/_/g, ' ')}</div>`;
+        items.forEach(item => container.innerHTML += createRow(item));
+    });
+
+    container.querySelectorAll('.mini-sync-btn').forEach(btn => {
+        btn.onclick = async (e) => {
+            const el = e.target;
+            const action = el.dataset.action;
+            const name = el.dataset.name;
+            const id = el.dataset.id;
+
+            el.disabled = true;
+            el.innerHTML = "⏳";
+
+            try {
+                if (action === 'push') await syncUp(name);
+                if (action === 'pull') await syncDown(id, name);
+                const newReport = await generateSyncReport();
+                renderSyncDashboard(newReport);
+            } catch (err) {
+                alert("Failed: " + err.message);
+                el.innerHTML = "❌";
+            }
+        };
+    });
+}
+
 
 async function openSyncModal() {
     let modal = document.getElementById('sync-modal');
@@ -97,22 +263,41 @@ async function openSyncModal() {
         modal.className = 'import-popup-overlay';
         modal.style.display = 'flex';
         modal.innerHTML = `
-            <div class="import-popup-content" style="max-width: 600px; max-height:80vh; overflow-y:auto;">
-                <h3>Sync Manager</h3>
-                <div id="sync-list" style="margin-bottom:20px;">Scanning...</div>
-                <button id="close-sync" class="import-secondary-action-btn">Close</button>
+            <div class="import-popup-content" style="max-width: 800px; max-height:85vh; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3>☁️ Sync Manager</h3>
+                    <button id="close-sync" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer;">✖</button>
+                </div>
+                
+                <div id="sync-toolbar" style="display:flex; gap:10px; margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:8px;">
+                    <div style="flex:1;">
+                        <strong>Status:</strong> <span id="sync-status-text">Scanning...</span>
+                    </div>
+                    <button id="btn-push-all" class="sync-action-btn" disabled>⬆ Push All (<span id="count-push">0</span>)</button>
+                    <button id="btn-pull-all" class="sync-action-btn" disabled>⬇ Pull All (<span id="count-pull">0</span>)</button>
+                </div>
+
+                <div id="sync-progress-container" style="display:none; margin-bottom:10px;">
+                    <div style="background:#eee; height:10px; border-radius:5px; overflow:hidden;">
+                        <div id="sync-progress-bar" style="width:0%; background:#4CAF50; height:100%; transition:width 0.3s;"></div>
+                    </div>
+                    <div id="sync-progress-label" style="font-size:0.8rem; text-align:center; margin-top:5px;">Processing...</div>
+                </div>
+
+                <div id="sync-list" style="flex:1; overflow-y:auto; padding-right:5px;"></div>
             </div>
         `;
         document.body.appendChild(modal);
         document.getElementById('close-sync').onclick = () => modal.style.display = 'none';
     } else {
         modal.style.display = 'flex';
-        document.getElementById('sync-list').innerHTML = "Scanning...";
+        document.getElementById('sync-list').innerHTML = "<p style='text-align:center; padding:20px;'>Scanning files...</p>";
+        document.getElementById('sync-progress-container').style.display = 'none';
     }
 
     try {
         const report = await generateSyncReport();
-        renderSyncRows(report);
+        renderSyncDashboard(report);
     } catch (e) {
         document.getElementById('sync-list').innerHTML = `<p style="color:red">Error: ${e.message}</p>`;
     }

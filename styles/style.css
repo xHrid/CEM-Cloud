@@ -1,367 +1,370 @@
-#map {
-  height: 100vh;
+/* =========================================
+   1. GLOBAL RESET & TYPOGRAPHY
+   ========================================= */
+:root {
+    --primary-color: rgb(0, 255, 110);
+    --primary-hover: rgb(0, 200, 85);
+    --accent-blue: #007bff;
+    --danger-red: #ff4d4d;
+    --text-dark: #333;
+    --bg-glass: rgba(255, 255, 255, 0.85); /* Slightly more opaque for readability */
+    --shadow-soft: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 * {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  font-size: 1.2rem;
-  font-family: 'Poppins', sans-serif;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
 }
 
-/* --- Toast Notification --- */
-#toast-notification {
-  position: fixed;
-  bottom: 20px;
-  right: -300px; /* Start off-screen */
-  width: 280px;
-  padding: 15px;
-  background-color: #333;
-  color: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-  transition: right 0.5s ease-in-out;
-  z-index: 99999;
-  font-size: 0.95rem;
+body {
+    overflow: hidden;
+    font-size: 16px;
 }
 
-#toast-notification.show {
-  right: 20px; /* Slide in */
+#map {
+    height: 100vh;
+    width: 100vw;
+    z-index: 1;
 }
 
-#toast-notification.success {
-  background-color: #28a745;
-}
+/* Scrollbar Styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #ccc; border-radius: 10px; }
 
-#toast-notification.failed {
-  background-color: #dc3545;
-}
-
-
-.leaflet-popup-content {
-  min-width: 200px;
-}
-
-#spot-details-menu h2 {
-  margin-top: 0;
-  color: #333;
-}
-
-#spot-details-menu ul {
-  padding-left: 20px;
-}
-
-.modal {
-  display: none;
-  position: fixed;
-  z-index: 1000;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0,0,0,0.4);
-}
-
-.modal-content {
-  background-color: #fefefe;
-  margin: 15% auto;
-  padding: 20px;
-  border: 1px solid #888;
-  width: 80%;
-  max-width: 400px;
-}
-
-.close {
-  color: #aaa;
-  float: right;
-  font-size: 28px;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.button-group {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 20px;
-}
-
-.button-group * {
-  font-size: 1rem;
-  width: 5rem;
-  padding: 0.2rem;
-  border-radius: 0.5rem;
-  border: none;
-  background-color: rgb(0, 255, 110);
-  cursor: pointer;
-}
-
-.tracking-active {
-  background-color: red;
-  color: white;
-}
-
-
-.save-route-dialog {
-  display: block;
-}
-
-#route-name {
-  width: 100%;
-  padding: 0.2rem;
-  margin: 1rem 0rem;
-  border: 2px solid black;
-}
-
-/* --- Control Panel Button Group Styling --- */
-.add-site-div {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr); /* Two columns */
-    gap: 10px;
-    margin-top: 1rem;
-    width: fit-content;
-}
-
-.add-site-div button, .add-site-div .add_site, .add-site-div .control-button {
-    width: 100%;
-    padding: 10px 5px; /* Vertical and horizontal padding */
-    font-size: 0.9rem; /* Smaller font for a cleaner look */
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    background-color: #fff;
+/* =========================================
+   2. SHARED UI ELEMENTS
+   ========================================= */
+button, .popup-btn, .save-btn, .import-action-btn, 
+.import-secondary-action-btn, .show-external-data-btn {
+    border: none;
+    border-radius: 8px;
     cursor: pointer;
-    transition: background-color 0.2s, box-shadow 0.2s;
-    text-align: center;
-    box-sizing: border-box; /* Ensures padding is included in width */
-}
-
-.add-site-div button:hover, .add-site-div .add_site:hover, .add-site-div .control-button:hover {
-    background-color: #e9e9e9;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-/* --- Jobs Popup Styling --- */
-#jobs-list {
+    transition: all 0.2s ease;
+    font-size: 0.95rem;
+    font-weight: 500;
+    padding: 10px 15px;
     display: flex;
-    flex-direction: column;
-    gap: 15px; /* Space between job cards */
-}
-
-.job-item {
-    background-color: #f9f9f9;
-    border: 1px solid #ddd;
-    border-left: 5px solid #007bff; /* Default border color */
-    border-radius: 5px;
-    padding: 15px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    display: flex;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
-    flex-wrap: wrap; /* Allow wrapping for smaller screens */
-    gap: 10px;
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+button:active { transform: scale(0.98); }
+button:disabled { cursor: not-allowed; opacity: 0.6; filter: grayscale(100%); }
+
+/* Inputs */
+input[type="text"], textarea, select, .import-text-input {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0 16px 0;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    background-color: #f9f9f9;
+}
+input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    background: #fff;
 }
 
-.job-item:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-}
-
-.job-item-info {
+/* [REQUEST 3] Professional File Input Styling */
+input[type="file"] {
+    width: 100%;
+    padding: 8px;
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 8px;
     font-size: 0.9rem;
+    color: #555;
+    margin-bottom: 15px;
+}
+
+input[type="file"]::file-selector-button {
+    margin-right: 15px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: none;
+    background-color: #e9ecef;
     color: #333;
-    line-height: 1.5;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background 0.2s;
 }
 
-.job-item-info strong {
-    color: #000;
+input[type="file"]::file-selector-button:hover {
+    background-color: #dde0e3;
 }
 
-/* Specific border colors for job status */
-.job-item.status-completed { border-left-color: #28a745; }
-.job-item.status-failed { border-left-color: #dc3545; }
-.job-item.status-running { border-left-color: #007bff; }
-.job-item.status-queued { border-left-color: #ffc107; }
-
-
-/* Job Status Badge */
-.job-status {
-    padding: 5px 12px;
-    border-radius: 15px;
+/* =========================================
+   3. SIDEBAR CONTROLS
+   ========================================= */
+#menu-toggle {
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 1100;
+    background: #333;
     color: white;
-    font-weight: bold;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 1.2rem;
+    box-shadow: var(--shadow-soft);
 }
 
-.job-status.status-completed { background-color: #28a745; }
-.job-status.status-failed { background-color: #dc3545; }
-.job-status.status-running { background-color: #007bff; }
-.job-status.status-queued { background-color: #ffc107; color: #333;}
-
-/* --- Analysis Form Styling --- */
-#analysis-form {
+#controls {
+    position: fixed;
+    height: 100%;
+    width: 300px;
+    background-color: var(--bg-glass);
+    backdrop-filter: blur(15px);
+    -webkit-backdrop-filter: blur(15px);
+    border-right: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: var(--shadow-soft);
+    padding: 80px 20px 20px 20px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 15px;
 }
 
-#analysis-script-select {
+/* [REQUEST 1] Desktop Menu Fix: Rely strictly on the class */
+#controls.open { transform: translateX(0); }
+
+/* [REQUEST 4] Personality: Restoring Green Buttons */
+.add-site-div {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
     width: 100%;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    background-color: #fff;
-    font-size: 1rem;
-    cursor: pointer;
 }
 
-#analysis-description {
+.add-site-div button, 
+.add-site-div .add_site, 
+.add-site-div .control-button {
+    width: 100%; 
+    background-color: var(--primary-color); /* Green */
+    border: 1px solid rgba(0,0,0,0.05);
     font-size: 0.9rem;
-    color: #666;
-    margin-top: -10px;
-    padding: 10px;
-    border-left: 3px solid #007bff;
-    background-color: #f4f4f9;
-    border-radius: 0 5px 5px 0;
+    color: #000;
+    font-weight: 600;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
 }
-
-#analysis-file-selection {
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    padding: 10px;
-    background-color: #fff;
-}
-
-#analysis-file-selection div {
-    display: flex;
-    align-items: center;
-    margin-bottom: 8px;
-    padding: 5px;
-    border-radius: 4px;
-    transition: background-color 0.2s;
-}
-
-#analysis-file-selection div:hover {
-    background-color: #f0f8ff; /* Light blue on hover */
-}
-
-#analysis-file-selection input[type="checkbox"] {
-    cursor: pointer;
-    accent-color: #0cff49;
-}
-
-#analysis-file-selection label {
-    font-size: 0.9rem;
-    cursor: pointer;
-    user-select: none;
-    flex-grow: 1;
-}
-
-/* --- Jobs Popup Enhancements --- */
-#refresh-jobs-btn {
-    display: block;
-    margin: 0 auto 15px auto;
-    padding: 8px 20px;
-    font-size: 0.9rem;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background-color 0.2s, transform 0.2s;
-}
-
-#refresh-jobs-btn:hover {
-    background-color: #0056b3;
-    transform: scale(1.05);
-}
-
-.job-card {
-    position: relative; /* Needed for positioning the action buttons */
-}
-
-.job-card-actions {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    display: flex;
-    gap: 5px;
-}
-
-.job-action-btn {
-    padding: 4px 8px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.8rem;
-    font-weight: bold;
-    transition: background-color 0.2s, transform 0.2s;
-}
-
-.job-action-btn:hover {
+.add-site-div button:hover { 
+    background-color: var(--primary-hover); 
     transform: translateY(-1px);
 }
 
-.job-cancel-btn {
-    background-color: #f0ad4e; /* Warning orange */
+/* [REQUEST 4] Subtle Sync Buttons */
+#btn-login, #btn-sync-master, #btn-sync-manager {
+    font-size: 0.85rem;
+    padding: 8px 5px;
+    background-color: #f0f0f0; /* Subtle grey */
+    color: #444;
+    border: 1px solid #ccc;
+    font-weight: 500;
+    white-space: nowrap; /* Force one line */
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#btn-login:hover, #btn-sync-master:hover, #btn-sync-manager:hover {
+    background-color: #e0e0e0;
+    color: #000;
+}
+/* Login should stand out slightly more if needed */
+#btn-login { background-color: var(--accent-blue); color: white; border: none;}
+#btn-login:hover { background-color: #0056b3; color: white;}
+
+
+/* Control Rows */
+.control {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(255,255,255,0.5);
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.6);
+}
+.div-label { font-weight: 600; font-size: 0.9rem; color: #444; }
+
+/* Checkboxes */
+.spot-toggle, label[for="show-routes-toggle"] {
+    display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer;
+}
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary-color); margin: 0; }
+
+/* Lat/Lon */
+#latlon {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background-color: #333; color: white; padding: 8px 16px; border-radius: 20px;
+    font-size: 0.85rem; z-index: 900; pointer-events: none;
+}
+
+/* =========================================
+   4. POPUPS & MODALS (Unified Positioning)
+   ========================================= */
+/* [REQUEST 1] Fix: Modals hidden by default, Flex for centering */
+.popup-overlay, .import-popup-overlay, .modal, .external-data-popup {
+    display: none; 
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    justify-content: center; /* Center Horizontal */
+    align-items: center;     /* Center Vertical */
+    z-index: 2000;
+    backdrop-filter: blur(2px);
+    margin: 0 !important; /* Override any legacy margins */
+}
+
+/* [REQUEST 1] External Viewer specific override removal */
+/* We remove the `top: 50%... transform...` logic and use the flex parent above */
+#external-data-viewer.external-data-popup {
+    /* The flex rules on the class .external-data-popup above handle the centering now. */
+    /* Just ensure it's not fighting itself */
+    transform: none; 
+    left: 0; top: 0;
+}
+
+.popup-content, .modal-content, .import-popup-content, .external-data-popup-content {
+    background-color: #ffffff;
+    padding: 25px;
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    width: 90%;
+    max-width: 400px;
+    max-height: 85vh;
+    overflow-y: auto;
+    position: relative;
+    /* Reset margins that might cause offsets */
+    margin: 0; 
+}
+.import-popup-content { max-width: 500px; }
+
+/* [REQUEST 2] Side-by-Side Button Layout */
+.button-group, .import-form-actions, #spot-form-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 15px;
+}
+
+/* Buttons inside popups */
+.popup-btn, .save-btn, .import-action-btn { background-color: var(--primary-color); color: #000; width: 100%; }
+.popup-btn:hover { background-color: var(--primary-hover); }
+
+.cancel-btn, .import-secondary-action-btn, #close-form { background-color: #e0e0e0; color: #333; width: 100%; }
+.cancel-btn:hover { background-color: #d0d0d0; }
+
+/* =========================================
+   5. SPECIFIC FORM STYLES
+   ========================================= */
+.media-controls {
+    display: flex; align-items: center; gap: 10px; margin: 15px 0;
+}
+
+/* [REQUEST 5] Camera Button Styling */
+.custom-upload {
+    width: 45px; height: 45px; border-radius: 10px;
+    display: flex; justify-content: center; align-items: center;
+    background-color: var(--primary-color); /* Green by default */
+    border: 1px solid transparent;
+    cursor: pointer; font-size: 1.2rem; transition: 0.2s;
+}
+/* Selected state (Blue) - Toggled by JS */
+.custom-upload.selected {
+    background-color: var(--accent-blue);
     color: white;
+    border-color: var(--accent-blue);
 }
-.job-cancel-btn:hover {
-    background-color: #ec971f;
+.custom-upload.recording { background-color: var(--danger-red); color: white; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+
+/* Import Multi-Select */
+.import-multi-select-box {
+    border: 1px solid #ddd; padding: 10px; max-height: 150px; overflow-y: auto;
+    background-color: #fcfcfc; border-radius: 8px; margin-bottom: 15px;
 }
+.import-multi-select-box label { display: flex; align-items: center; gap: 8px; padding: 5px; cursor: pointer; }
+.import-multi-select-box label:hover { background: #f0f0f0; }
 
-.job-remove-btn {
-    background-color: #d9534f; /* Danger red */
-    color: white;
-    padding: 2px 8px; /* Adjust padding for the 'X' */
-    font-family: 'Courier New', Courier, monospace;
-    line-height: 1.2;
+/* =========================================
+   6. SPOT DETAILS & EXTERNAL DATA
+   ========================================= */
+#spot-details-menu {
+    position: fixed; top: 0; right: -100%; width: 100%; max-width: 400px; height: 100%;
+    background: white; box-shadow: -5px 0 15px rgba(0, 0, 0, 0.1);
+    transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1005; padding: 25px; overflow-y: auto;
 }
+#spot-details-menu.open { right: 0; }
 
-.job-remove-btn:hover {
-    background-color: #c9302c;
+#close-spot-details {
+    position: absolute; top: 20px; right: 20px; width: 36px; height: 36px;
+    border-radius: 8px; background: #f0f0f0; color: #333;
+    display: flex; justify-content: center; align-items: center; padding: 0;
 }
+#close-spot-details:hover { background: #e0e0e0; }
 
-/* --- Minimal Scrollbar Styling --- */
+.show-external-data-btn { width: 100%; margin-top: 20px; background-color: var(--accent-blue); color: white; }
+.spot-entry img { max-width: 100%; border-radius: 12px; margin-top: 15px; border: 1px solid #eee; }
 
-/* Works for WebKit browsers (Chrome, Safari, Edge) */
-::-webkit-scrollbar {
-  width: 8px; 
-  height: 8px;
+/* External Data List */
+.external-data-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding-bottom: 15px; border-bottom: 1px solid #eee; margin-bottom: 15px;
 }
-
-::-webkit-scrollbar-track {
-  background: #f1f1f1; 
-  border-radius: 10px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #c1c1c1; 
-  border-radius: 10px; 
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #a1a1a1; 
-}
-
-#controls, 
-.popup-content,
-.modal-content, 
-.import-popup-content, 
-#spot-details-menu, 
-.external-data-list, 
-#analysis-file-selection, 
-#jobs-list, 
-.import-multi-select-box 
-{
-  scrollbar-width: thin;          
-  scrollbar-color: #defdff #ffffff; 
+.close-viewer-btn { background: transparent; font-size: 1.5rem; color: #555; padding: 0; width: auto; }
+.external-data-list a {
+    display: block; padding: 12px; color: var(--accent-blue); text-decoration: none;
+    border-bottom: 1px solid #eee; font-size: 0.9rem;
 }
 
+/* =========================================
+   7. SYNC DASHBOARD
+   ========================================= */
+.sync-group-header {
+    background: #f0f2f5; padding: 10px 15px; font-weight: 600;
+    margin-top: 20px; border-radius: 8px; font-size: 0.85rem; color: #555;
+    text-transform: uppercase;
+}
+.sync-row {
+    display: grid; grid-template-columns: 1fr 100px 40px; gap: 10px;
+    align-items: center; padding: 12px 10px; border-bottom: 1px solid #eee; font-size: 0.9rem;
+}
+.mini-sync-btn {
+    width: 32px; height: 32px; padding: 0; border: 1px solid #ddd;
+    background: white; border-radius: 50%; color: var(--accent-blue);
+}
 
-.direction-arrow { transform-origin: center; display:flex; align-items:center; justify-content:center; }
-.direction-arrow .arrow-inner { width:36px; height:36px; transform-origin:50% 50%; transition: transform 150ms linear; }
+/* Toast */
+#toast-notification {
+    position: fixed; bottom: 20px; right: -350px; width: 300px; padding: 16px;
+    background-color: #333; color: white; border-radius: 12px; z-index: 99999;
+    transition: right 0.4s; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+#toast-notification.show { right: 20px; }
+#toast-notification.success { border-left: 5px solid var(--primary-color); }
+#toast-notification.failed { border-left: 5px solid var(--danger-red); }
+
+/* =========================================
+   8. RESPONSIVE
+   ========================================= */
+@media (max-width: 768px) {
+    #controls {
+        width: 100%; height: auto; max-height: 70vh; bottom: 0; top: auto;
+        border-radius: 20px 20px 0 0; transform: translateY(100%);
+        border-right: none; border-top: 1px solid rgba(255,255,255,0.5);
+    }
+    #controls.open { transform: translateY(0); }
+    .add-site-div { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .add-site-div button { font-size: 0.8rem; padding: 8px 4px; }
+    #latlon { bottom: 85px; font-size: 0.75rem; }
+}

@@ -7,17 +7,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/png" href="/images/assets/favi.png">
 
-    <link rel="stylesheet" href="./styles/control_style.css" />
-    <link rel="stylesheet" href="./styles/spot_popup.css" />
-    <link rel="stylesheet" href="./styles/style.css" />
-    <link rel="stylesheet" href="./styles/details-style.css">
     <link rel="stylesheet" href="./leaflet/leaflet.css" />
-    <link rel="stylesheet" href="./styles/add_site_section.css" />
-    <link rel="stylesheet" href="./styles/import_media.css" />
-    <link rel="stylesheet" href="./styles/external_data_viewer.css" />
+    
+    <link rel="stylesheet" href="./styles/style.css" />
 
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <meta charset="UTF-8"> <title>Continuous Ecological Monitoring Toolkit</title>
+    <meta charset="UTF-8">
 </head>
 
 <body>
@@ -150,6 +145,30 @@
     <div id="jobs-popup" class="import-popup-overlay" style="display: none;">
         <div class="import-popup-content">
             <h3>Jobs Feature Pending</h3><button id="close-jobs-btn">Close</button>
+        </div>
+    </div>
+
+    <div id="conflict-modal" class="popup-overlay" style="display: none; z-index: 2000;">
+        <div class="popup-content" style="text-align: center;">
+            <h3>⚠️ Data Conflict</h3>
+            <p id="conflict-msg">Local and Drive data are different.</p>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+                <button id="btn-conflict-merge" class="popup-btn" style="background: #673AB7;">
+                    ✨ Smart Merge (Recommended)
+                </button>
+                <div style="display: flex; gap: 10px;">
+                    <button id="btn-conflict-pull" class="popup-btn" style="background: #2196F3; flex: 1;">
+                        ⬇ Pull (Drive Wins)
+                    </button>
+                    <button id="btn-conflict-push" class="popup-btn" style="background: #FF9800; flex: 1;">
+                        ⬆ Push (Local Wins)
+                    </button>
+                </div>
+                <button id="btn-conflict-cancel" class="popup-btn" style="background: #777;">
+                    Do Nothing
+                </button>
+            </div>
         </div>
     </div>
 

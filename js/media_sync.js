@@ -1,11 +1,10 @@
-import { getRootHandle, getSpots, getSites, getLocalState } from './storage.js';
+import { getSpots, getSites, getLocalState } from './storage.js';
 import { listAllDriveFiles, uploadFile, findOrCreateRootFolder, downloadBlob, ensureDrivePath } from './drive_api.js';
+import * as FS from './storage_adapter.js';
 
 export async function generateSyncReport() {
     const report = [];
-    const rootHandle = getRootHandle();
-    if (!rootHandle) return [];
-
+    
     const driveFiles = await listAllDriveFiles();
     const driveMap = new Map(); 
     
@@ -37,90 +36,77 @@ export async function generateSyncReport() {
     }
 
     for (const relPath of expectedFiles) {
-        const item = {
-            name: relPath, 
-            isLocal: false,
-            isDrive: false,
-            driveId: null
-        };
+        const item = { name: relPath, isLocal: false, isDrive: false, driveId: null };
 
-        try {
-            await checkLocalFileExists(rootHandle, relPath);
+        if (await FS.checkFileExists(relPath)) {
             item.isLocal = true;
-        } catch (e) {
-            item.isLocal = false;
         }
 
         if (driveMap.has(relPath)) {
             item.isDrive = true;
             item.driveId = driveMap.get(relPath).id;
         }
-
         report.push(item);
     }
     return report;
 }
 
-async function checkLocalFileExists(rootHandle, relPath) {
-    if (relPath === 'master_data.json') {
-        await rootHandle.getFileHandle(relPath);
-        return;
-    }
-    const parts = relPath.split('/');
-    const filename = parts.pop();
-    let currentDir = rootHandle;
-    for (const folder of parts) {
-        currentDir = await currentDir.getDirectoryHandle(folder);
-    }
-    await currentDir.getFileHandle(filename);
-}
-
 export async function syncUp(relPath) {
-    const rootHandle = getRootHandle();
     const rootFolderId = await findOrCreateRootFolder();
 
-    let fileObj;
+    const fileObj = await FS.getFileBlob(relPath); 
+    if (!fileObj) throw new Error("Local file not found");
+
     if (relPath === 'master_data.json') {
-        const fh = await rootHandle.getFileHandle(relPath);
-        fileObj = await fh.getFile();
-        await uploadFile(fileObj, relPath, 'application/json', rootFolderId, relPath);
+         await uploadFile(fileObj, relPath, 'application/json', rootFolderId, relPath);
     } else {
         const parts = relPath.split('/');
         const filename = parts.pop();
         
-        let currentDir = rootHandle;
-        for (const folder of parts) {
-            currentDir = await currentDir.getDirectoryHandle(folder);
-        }
-        const fh = await currentDir.getFileHandle(filename);
-        fileObj = await fh.getFile();
-
         const parentId = await ensureDrivePath(parts, rootFolderId);
-        await uploadFile(fileObj, filename, fileObj.type, parentId, relPath);
+        
+        await uploadFile(fileObj, filename, fileObj.type || 'application/octet-stream', parentId, relPath);
     }
 }
 
 export async function syncDown(driveId, relPath) {
-    const rootHandle = getRootHandle();
     const blob = await downloadBlob(driveId);
     
     if (relPath === 'master_data.json') {
-        const fh = await rootHandle.getFileHandle(relPath, { create: true });
-        const writable = await fh.createWritable();
-        await writable.write(blob);
-        await writable.close();
+        const text = await blob.text();
+        const data = JSON.parse(text);
+        await FS.saveMasterData(data);
     } else {
         const parts = relPath.split('/');
         const filename = parts.pop();
         
-        let currentDir = rootHandle;
-        for (const folder of parts) {
-            currentDir = await currentDir.getDirectoryHandle(folder, { create: true });
+        await FS.saveFile(blob, filename, parts);
+    }
+}
+
+export async function syncBatch(items, direction, onProgress) {
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        try {
+            if (direction === 'push') {
+                await syncUp(item.name);
+            } else if (direction === 'pull') {
+                if (!item.driveId) throw new Error("Missing Drive ID");
+                await syncDown(item.driveId, item.name);
+            }
+            successCount++;
+        } catch (e) {
+            console.error(`Failed to ${direction} ${item.name}:`, e);
+            failCount++;
         }
         
-        const fh = await currentDir.getFileHandle(filename, { create: true });
-        const writable = await fh.createWritable();
-        await writable.write(blob);
-        await writable.close();
+        if (onProgress) {
+            const percent = Math.round(((i + 1) / items.length) * 100);
+            onProgress(percent, item.name, failCount);
+        }
     }
+    return { success: successCount, failed: failCount };
 }
