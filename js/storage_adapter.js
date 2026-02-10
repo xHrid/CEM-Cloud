@@ -1,4 +1,5 @@
-const HAS_NATIVE_FS = 'showDirectoryPicker' in window;
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const HAS_NATIVE_FS = 'showDirectoryPicker' in window && !isMobile;
 
 const DB_NAME = 'CEM_Toolkit_DB';
 const DB_STORE = 'files';
@@ -7,7 +8,9 @@ function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, 1);
         req.onupgradeneeded = (e) => {
-            e.target.result.createObjectStore(DB_STORE);
+            if (!e.target.result.objectStoreNames.contains(DB_STORE)) {
+                e.target.result.createObjectStore(DB_STORE);
+            }
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -33,7 +36,6 @@ async function idbGet(key) {
         req.onerror = () => reject(req.error);
     });
 }
-
 
 let rootHandle = null; 
 let memoryMode = false; 
@@ -116,7 +118,6 @@ export async function getFileUrl(relativePath) {
             const file = await fh.getFile();
             return URL.createObjectURL(file);
         } catch (e) {
-            console.warn("Missing file (native):", relativePath);
             return null;
         }
     } else {
