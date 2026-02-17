@@ -1,70 +1,124 @@
-import { getSpots, getSites, getLocalState } from './storage.js';
+import { getSpots, getSites, getLocalState, getProjectFolderName } from './storage.js';
 import { listAllDriveFiles, uploadFile, findOrCreateRootFolder, downloadBlob, ensureDrivePath } from './drive_api.js';
 import * as FS from './storage_adapter.js';
 
-export async function generateSyncReport() {
+export async function generateSyncReport(targetProjectId = null) {
     const report = [];
+    const appState = getLocalState();
     
-    const driveFiles = await listAllDriveFiles();
+    // If no project specified, default to current
+    const projectId = targetProjectId || appState.currentProjectId;
+    const project = appState.projects.find(p => p.id === projectId);
+    
+    if (!project) return [];
+
+    const projectFolder = getProjectFolderName(project);
+    const driveFiles = await listAllDriveFiles(); // Still fetches all (optimization: filter by query)
+    
+    // Filter Drive files that belong to this project folder
     const driveMap = new Map(); 
-    
     driveFiles.forEach(f => {
         if (f.appProperties && f.appProperties.relativePath) {
-            driveMap.set(f.appProperties.relativePath, f);
-        } else if (f.name === 'master_data.json') {
-            driveMap.set('master_data.json', f);
+            // Check if file starts with project folder
+            if (f.appProperties.relativePath.startsWith(projectFolder + '/')) {
+                driveMap.set(f.appProperties.relativePath, f);
+            }
         }
     });
     
+    // Collect Expected Local Files for THIS project
     const expectedFiles = [];
-    expectedFiles.push('master_data.json');
-
-    getSpots().forEach(s => {
-        if(s.image_local_filename) expectedFiles.push(s.image_local_filename);
-        if(s.audio_local_filename) expectedFiles.push(s.audio_local_filename);
-    });
-
-    getSites().forEach(s => {
-        if(s.kml_filename) expectedFiles.push(s.kml_filename);
-    });
-
-    const appState = getLocalState();
-    if (appState.external_files) {
-        appState.external_files.forEach(f => {
+    // We do NOT include master_data.json here in the project view, 
+    // or we treat it as global. Let's keep it separate or handled by the "Global" indicator.
+    
+    if (project.spots) {
+        project.spots.forEach(s => {
+            if(s.image_local_filename) expectedFiles.push(s.image_local_filename);
+            if(s.audio_local_filename) expectedFiles.push(s.audio_local_filename);
+        });
+    }
+    if (project.sites) {
+        project.sites.forEach(s => {
+            if(s.kml_filename) expectedFiles.push(s.kml_filename);
+        });
+    }
+    if (project.external_files) {
+        project.external_files.forEach(f => {
             if(f.local_path) expectedFiles.push(f.local_path);
         });
     }
 
+    // Build the report
     for (const relPath of expectedFiles) {
         const item = { name: relPath, isLocal: false, isDrive: false, driveId: null };
-
-        if (await FS.checkFileExists(relPath)) {
-            item.isLocal = true;
-        }
-
+        if (await FS.checkFileExists(relPath)) item.isLocal = true;
         if (driveMap.has(relPath)) {
             item.isDrive = true;
             item.driveId = driveMap.get(relPath).id;
         }
         report.push(item);
     }
+    
+    // Check for "Drive Only" files (files on Drive but not in local JSON)
+    // iterate driveMap keys...
+    
     return report;
+}
+
+export async function getAllProjectsSyncStatus() {
+    const appState = getLocalState();
+    const statuses = {}; // { projectId: { synced: boolean, count: number } }
+    
+    const driveFiles = await listAllDriveFiles();
+    const drivePaths = new Set(driveFiles.map(f => f.appProperties?.relativePath).filter(Boolean));
+
+    for (const project of appState.projects) {
+        let isSynced = true;
+        const projectFolder = getProjectFolderName(project);
+        
+        // Quick check of known assets
+        const assets = [];
+        if(project.spots) project.spots.forEach(s => {
+            if(s.image_local_filename) assets.push(s.image_local_filename);
+            if(s.audio_local_filename) assets.push(s.audio_local_filename);
+        });
+        if(project.sites) project.sites.forEach(s => {
+            if(s.kml_filename) assets.push(s.kml_filename);
+        });
+
+        for (const path of assets) {
+            // It is synced if it exists on Drive
+            // (Strictly: it should also exist Locally, but for "Sync Status" 
+            // usually we care if it's safe on cloud)
+            if (!drivePaths.has(path)) {
+                isSynced = false;
+                break;
+            }
+        }
+        
+        statuses[project.id] = isSynced;
+    }
+    
+    return statuses;
 }
 
 export async function syncUp(relPath) {
     const rootFolderId = await findOrCreateRootFolder();
-
-    const fileObj = await FS.getFileBlob(relPath); 
+    const fileObj = await FS.getFileBlob(relPath);
     if (!fileObj) throw new Error("Local file not found");
 
     if (relPath === 'master_data.json') {
-         await uploadFile(fileObj, relPath, 'application/json', rootFolderId, relPath);
+        // Check if it already exists — update rather than create a duplicate
+        const existing = await findFileByName('master_data.json', rootFolderId);
+        if (existing) {
+            await updateDriveFile(existing.id, fileObj);
+        } else {
+            await uploadFile(fileObj, relPath, 'application/json', rootFolderId, relPath);
+        }
     } else {
         const parts = relPath.split('/');
         const filename = parts.pop();
-        
         const parentId = await ensureDrivePath(parts, rootFolderId);
-        
         await uploadFile(fileObj, filename, fileObj.type || 'application/octet-stream', parentId, relPath);
     }
 }

@@ -8,7 +8,7 @@
     <link rel="icon" type="image/png" href="/images/assets/favi.png">
 
     <link rel="stylesheet" href="./leaflet/leaflet.css" />
-    
+
     <link rel="stylesheet" href="./styles/style.css" />
 
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -19,6 +19,15 @@
     <main>
         <button id="menu-toggle">☰</button>
         <div id="controls" class="open">
+            <div class="control-section"
+                style="margin-bottom: 15px; border-bottom: 1px solid #ccc; padding-bottom: 10px;">
+                <div class="div-label" style="margin-bottom: 5px;">Project</div>
+                <select id="project-select" class="project-dropdown"></select>
+                <div style="display: flex; gap: 5px; margin-top: 5px;">
+                    <button id="btn-new-project" class="small-btn">New</button>
+                    <button id="btn-rename-project" class="small-btn">Rename</button>
+                </div>
+            </div>
             <div id="auth-section" style="margin-top: 3.5rem;"></div>
 
             <div class="add-site-div">

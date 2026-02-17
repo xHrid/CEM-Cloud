@@ -1,7 +1,58 @@
-import { getSpots, saveExternalFile, resolveMasterConflict } from './storage.js';
-import { generateSyncReport, syncUp, syncDown, syncBatch } from './media_sync.js';
+import { getSpots, saveExternalFile, resolveMasterConflict, getLocalState } from './storage.js';
+import { generateSyncReport, syncUp, syncDown, syncBatch, getAllProjectsSyncStatus } from './media_sync.js';
+import { 
+    createProject, switchProject, renameProject 
+} from './storage.js';
 
 document.addEventListener("DOMContentLoaded", () => {
+    const projectSelect = document.getElementById('project-select');
+const btnNewProject = document.getElementById('btn-new-project');
+const btnRenameProject = document.getElementById('btn-rename-project');
+
+function renderProjectList() {
+    const state = getLocalState();
+    if (!state.projects) return; // Not ready
+
+    projectSelect.innerHTML = '';
+    state.projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name;
+        if (p.id === state.currentProjectId) opt.selected = true;
+        projectSelect.appendChild(opt);
+    });
+}
+
+if (projectSelect) {
+    projectSelect.addEventListener('change', async (e) => {
+        try {
+            await switchProject(e.target.value);
+            // 'project-changed' event will trigger map refresh
+        } catch (err) { alert(err.message); }
+    });
+
+    btnNewProject.onclick = async () => {
+        const name = prompt("Enter new project name:", "New Project");
+        if (name) {
+            await createProject(name);
+            renderProjectList();
+        }
+    };
+
+    btnRenameProject.onclick = async () => {
+        const state = getLocalState();
+        const currentName = projectSelect.options[projectSelect.selectedIndex].text;
+        const newName = prompt("Rename project:", currentName);
+        if (newName && newName !== currentName) {
+            await renameProject(state.currentProjectId, newName);
+            renderProjectList();
+        }
+    };
+}
+
+// Listen for updates to re-render the list
+window.addEventListener('storage-ready', renderProjectList);
+window.addEventListener('project-changed', renderProjectList);
     const menuToggle = document.getElementById("menu-toggle");
     const controls = document.getElementById("controls");
     if(menuToggle) menuToggle.onclick = () => controls.classList.toggle("open");
@@ -158,21 +209,21 @@ function renderSyncDashboard(report) {
     const pullList = [];
 
     report.forEach(item => {
-        if (item.name === 'master_data.json') {
-            groups.Metadata.push(item);
-        } else if (item.name.startsWith('sites/')) {
-            groups.Sites.push(item);
-        } else if (item.name.startsWith('spots/')) {
-            // Extract Spot Name: spots/SpotName/images/...
-            const parts = item.name.split('/');
-            const spotName = parts[1];
-            if (!groups.Spots[spotName]) groups.Spots[spotName] = [];
-            groups.Spots[spotName].push(item);
-        }
+    const parts = item.name.split('/');
+    // parts[0] = ProjectFolder, parts[1] = 'spots' | 'sites', parts[2] = SpotName
+    if (item.name === 'master_data.json') {
+        groups.Metadata.push(item);
+    } else if (parts[1] === 'sites') {
+        groups.Sites.push(item);
+    } else if (parts[1] === 'spots') {
+        const spotName = parts[2] || 'Unknown';
+        if (!groups.Spots[spotName]) groups.Spots[spotName] = [];
+        groups.Spots[spotName].push(item);
+    }
 
-        if (item.isLocal && !item.isDrive) pushList.push(item);
-        if (!item.isLocal && item.isDrive) pullList.push(item);
-    });
+    if (item.isLocal && !item.isDrive) pushList.push(item);
+    if (!item.isLocal && item.isDrive) pullList.push(item);
+});
 
     document.getElementById('count-push').textContent = pushList.length;
     document.getElementById('count-pull').textContent = pullList.length;
@@ -295,12 +346,68 @@ async function openSyncModal() {
         document.getElementById('sync-progress-container').style.display = 'none';
     }
 
-    try {
-        const report = await generateSyncReport();
-        renderSyncDashboard(report);
-    } catch (e) {
-        document.getElementById('sync-list').innerHTML = `<p style="color:red">Error: ${e.message}</p>`;
+    const modalContent = document.querySelector('#sync-modal .import-popup-content');
+    
+    // Insert header controls if not present
+    if (!document.getElementById('sync-header-controls')) {
+        const header = document.createElement('div');
+        header.id = 'sync-header-controls';
+        header.style.marginBottom = '15px';
+        header.style.padding = '10px';
+        header.style.background = '#f9f9f9';
+        header.style.borderRadius = '8px';
+        header.style.display = 'flex';
+        header.style.alignItems = 'center';
+        header.style.gap = '10px';
+        
+        header.innerHTML = `
+            <span id="global-sync-status" style="font-size: 1.2rem;">Checking...</span>
+            <select id="sync-project-select" style="flex:1; margin:0;"></select>
+        `;
+        
+        // Insert after the title
+        const titleRow = modalContent.children[0];
+        titleRow.after(header);
+        
+        // Change Listener
+        document.getElementById('sync-project-select').onchange = async (e) => {
+             const report = await generateSyncReport(e.target.value);
+             renderSyncDashboard(report); // Assuming renderSyncDashboard clears and redraws list
+        };
     }
+
+    // 2. POPULATE & CHECK STATUS
+    const projectSelect = document.getElementById('sync-project-select');
+    const globalIndicator = document.getElementById('global-sync-status');
+    const state = getLocalState();
+    
+    // Set loading state
+    globalIndicator.textContent = "⏳";
+    projectSelect.innerHTML = '<option>Loading...</option>';
+    
+    // Fetch statuses
+    const statuses = await getAllProjectsSyncStatus();
+    
+    // Determine Global Status (Yellow if ANY project is unsynced)
+    const allSynced = Object.values(statuses).every(s => s === true);
+    globalIndicator.textContent = allSynced ? "✅" : "⚠️";
+    globalIndicator.title = allSynced ? "All projects synced" : "Some projects have unsynced files";
+
+    // Build Options
+    projectSelect.innerHTML = '';
+    state.projects.forEach(p => {
+        const isSynced = statuses[p.id];
+        const icon = isSynced ? "✅" : "⚠️";
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${icon} ${p.name}`;
+        if (p.id === state.currentProjectId) opt.selected = true;
+        projectSelect.appendChild(opt);
+    });
+
+    // Initial Render for Active Project
+    const report = await generateSyncReport(state.currentProjectId);
+    renderSyncDashboard(report);
 }
 
 function renderSyncRows(report) {

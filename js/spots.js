@@ -1,4 +1,5 @@
-import { saveSpot, getSpots, getLocalState, getLocalFileUrl } from './storage.js';
+import { saveSpot, getSpots, getExternalFiles, getLocalFileUrl } from './storage.js';
+
 let spotsLayer = null;
 
 let mediaRecorder;
@@ -89,7 +90,7 @@ async function showSpotDetails(spot) {
     const content = document.getElementById("spot-details-content");
     const obsDate = new Date(spot.timestamp || Date.now()).toLocaleString();
 
-    const allExternal = getLocalState().external_files || [];
+    const allExternal = getExternalFiles();
     const externalFiles = allExternal.filter(f => 
         f.linked_spots && f.linked_spots.includes(spot.spotId)
     );
@@ -152,6 +153,20 @@ function openExternalViewer(files) {
     dataContent.innerHTML = html;
     viewer.style.display = "flex";
 }
+
+export function clearSpotsLayer() {
+    if (spotsLayer) {
+        spotsLayer.clearLayers();
+    }
+}
+
+// Add listener
+window.addEventListener('project-changed', () => {
+    clearSpotsLayer();
+    displaySpots(); // This will now fetch from the NEW active project
+    // Also clear spot details panel if open
+    document.getElementById("spot-details-menu").classList.remove("open");
+});
 
 document.getElementById('display-spots').addEventListener('change', (e) => {
     if(e.target.checked) displaySpots();
