@@ -170,10 +170,56 @@ export function initApp() {
     });
 }
 
+function generateDataSignature(data) {
+    if (!data || !data.projects) return "empty";
+    
+    return data.projects.map(p => {
+        // Map each item to its ID + Timestamp, then sort to ensure order doesn't matter
+        const spots = (p.spots || []).map(s => `${s.spotId}_${s.timestamp}`).sort().join(',');
+        const sites = (p.sites || []).map(s => `${s.id}_${s.timestamp}`).sort().join(',');
+        const routes = (p.routes || []).map(r => `${r.id}_${r.timestamp}`).sort().join(',');
+        const files = (p.external_files || []).map(f => `${f.id}_${f.timestamp}`).sort().join(',');
+        
+        return `Project:${p.id}_${p.name}|Spots:${spots}|Sites:${sites}|Routes:${routes}|Files:${files}`;
+    }).sort().join('||');
+}
+
+// Add this helper function to inject the script dynamically
+async function ensureWatcherScript() {
+    try {
+        // 1. Check if the user already has the watcher in their local folder
+        const exists = await FS.checkFileExists('watcher.py');
+        
+        if (!exists) {
+            console.log('Fetching watcher.py from web server...');
+            
+            // 2. Fetch the script from your static site's root directory
+            const response = await fetch('./watcher.py');
+            
+            if (!response.ok) {
+                throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+            }
+            
+            // 3. Extract the text and convert it to a Blob
+            const pythonCode = await response.text();
+            const blob = new Blob([pythonCode], { type: 'text/plain' });
+            
+            // 4. Save it to the root of the user's selected local folder (empty array path)
+            await FS.saveFile(blob, 'watcher.py', []); 
+            console.log('✅ Successfully downloaded and injected watcher.py into local project root.');
+        } else {
+            console.log('watcher.py already exists locally. Skipping injection.');
+        }
+    } catch (e) {
+        console.warn('Could not inject watcher.py (might be offline, missing from server, or in memory mode):', e);
+    }
+}
+
 export async function selectAndInitStorage() {
     try {
         const storageInfo = await FS.initStorage();
         await ensureMasterJson();
+        await ensureWatcherScript();
 
         const btn = document.getElementById('btn-select-storage');
         if (btn) btn.style.display = 'none';
@@ -223,9 +269,12 @@ export async function checkForRemoteUpdates(interactive = false) {
         const remoteText = await readDriveTextFile(driveFile.id);
         const remoteData = JSON.parse(remoteText);
 
-        // Simple structural equality check
-        if (JSON.stringify(masterData) === JSON.stringify(remoteData)) {
-            console.log('Sync: Clean.');
+        // [THE FIX] Compare deterministic data signatures instead of volatile JSON strings
+        const localSignature = generateDataSignature(masterData);
+        const remoteSignature = generateDataSignature(remoteData);
+
+        if (localSignature === remoteSignature) {
+            console.log('Sync: Clean. Data signatures match.');
             if (interactive) alert('✅ You are up to date.');
             return;
         }
@@ -237,7 +286,7 @@ export async function checkForRemoteUpdates(interactive = false) {
         const localSpotCount = masterData.projects.reduce((n, p) => n + (p.spots?.length ?? 0), 0);
         const remoteSpotCount = remoteData.projects
             ? remoteData.projects.reduce((n, p) => n + (p.spots?.length ?? 0), 0)
-            : (remoteData.spots?.length ?? 0); // tolerate remote being old schema
+            : (remoteData.spots?.length ?? 0); 
 
         document.dispatchEvent(new CustomEvent('master-sync-conflict', {
             detail: { localCount: localSpotCount, remoteCount: remoteSpotCount }
@@ -590,4 +639,79 @@ export async function deleteProject(projectId) {
     window.dispatchEvent(new Event('project-changed'));
     window.dispatchEvent(new Event('data-updated'));
     pushMasterToDrive();
+}
+
+// =============================================================================
+// ANALYSIS & SYSTEM (JOBS/HEARTBEAT)
+// =============================================================================
+
+export async function saveJobRequest(jobData) {
+    const project = getActiveProject();
+    if (!project) throw new Error("No active project.");
+
+    const projectFolder = getProjectFolderName(project);
+    const jobId = jobData.job_id || crypto.randomUUID();
+    
+    const queuePath = [projectFolder, 'jobs', 'queue'];
+    const fileName = `${jobId}.json`;
+    
+    // [CHANGE] Include the user-defined name or fall back to the ID
+    const finalData = {
+        ...jobData,
+        job_id: jobId,
+        job_name: jobData.job_name || `Job ${jobId.substring(0,8)}`, // <-- NEW
+        project_id: project.id,
+        status: 'queued',
+        created_at: new Date().toISOString()
+    };
+
+    const blob = new Blob([JSON.stringify(finalData, null, 2)], { type: 'application/json' });
+    await FS.saveFile(blob, fileName, queuePath);
+    
+    return finalData;
+}
+
+// [IN FILE: storage.js]
+
+export async function getWatcherStatus() {
+    // REMOVED: const project = getActiveProject();
+    // REMOVED: const projectFolder = getProjectFolderName(project);
+    
+    // NEW: Always look at the root system folder
+    const statusPath = 'system/status.json'; 
+
+    try {
+        const blob = await FS.getFileBlob(statusPath);
+        if (!blob) return null;
+        
+        const text = await blob.text();
+        return JSON.parse(text);
+    } catch (e) {
+        return null; 
+    }
+}
+
+// [IN FILE: storage.js]
+
+export async function getInstalledScripts() {
+    // OLD CODE (Incorrectly looked inside active project):
+    // const project = getActiveProject();
+    // const projectFolder = getProjectFolderName(project);
+    // const registryPath = `${projectFolder}/system/scripts/installed.json`;
+
+    // NEW CODE (Correctly looks at Global Root):
+    const registryPath = 'system/scripts/installed.json';
+
+    try {
+        const blob = await FS.getFileBlob(registryPath);
+        if (!blob) {
+            console.warn("Script registry not found at:", registryPath);
+            return [];
+        }
+        const text = await blob.text();
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("Error loading scripts:", e);
+        return [];
+    }
 }

@@ -133,24 +133,80 @@
         </div>
     </div>
 
+    <div id="analysis-popup" class="import-popup-overlay" style="display: none;">
+        <div class="import-popup-content" style="max-width: 600px; max-height: 90vh; display: flex; flex-direction: column;">
+            
+            <div style="margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                <label class="div-label">Job Name <span style="color:red">*</span></label>
+                <input type="text" id="analysis-job-name" placeholder="e.g. River Survey - Morning" style="margin-bottom: 5px;" required />
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:10px;">
+                <h3>📊 Analysis Hub</h3>
+                <div style="font-size: 0.85rem; background: #f5f5f5; padding: 5px 10px; border-radius: 20px;">
+                    <span id="watcher-indicator" style="color: #ccc; font-size: 1.2rem; line-height: 0;">●</span>
+                    <span id="watcher-status-text" style="margin-left: 5px;">Connecting...</span>
+                </div>
+            </div>
+
+            <div id="watcher-offline-help"
+                style="display:none; background:#fff3cd; color:#856404; padding:15px; border-radius:8px; border:1px solid #ffeeba; margin-bottom:15px; font-size:0.9rem;">
+                <strong>⚠️ Watcher is Offline</strong><br>
+                To run analysis, you must start the python watcher on your computer.
+                <div
+                    style="background:#f8f9fa; border:1px solid #ddd; padding:8px; margin-top:8px; font-family:monospace; border-radius:4px; display:flex; justify-content:space-between;">
+                    <code id="watcher-command">python watcher.py</code>
+                    <button onclick="navigator.clipboard.writeText('python watcher.py')"
+                        style="background:none; border:none; color:#2196F3; cursor:pointer;">Copy</button>
+                </div>
+                <p style="margin-top:5px; margin-bottom:0; font-size:0.8rem;">Run this in your terminal at the root of
+                    your project folder.</p>
+            </div>
+
+            <div style="overflow-y: auto; padding-right: 5px;">
+
+                <label class="div-label">1. Select Analysis Script</label>
+                <select id="analysis-script-select" style="margin-bottom: 20px;">
+                    <option value="">Loading scripts...</option>
+                </select>
+
+                <label class="div-label">2. Select Input Data</label>
+                <div id="analysis-file-selector" class="import-multi-select-box"
+                    style="height: 120px; resize: vertical; margin-bottom: 20px;">
+                    <p style="padding:10px; color:#999;">Select a script first...</p>
+                </div>
+
+                <div id="dynamic-params-container" style="display:none;">
+                    <label class="div-label">3. Configure Parameters</label>
+                    <div id="analysis-dynamic-form"
+                        style="background: #f9f9f9; padding: 15px; border-radius: 8px; border: 1px solid #eee;">
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="button-group" style="margin-top: 20px; border-top: 1px solid #eee;">
+                <button id="btn-run-analysis" class="popup-btn" disabled>🚀 Queue Job</button>
+                <button id="close-analysis-btn" class="cancel-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="spot-details-menu">
         <button id="close-spot-details">x</button>
         <div id="spot-details-content"></div>
     </div>
 
     <div id="external-data-viewer" class="external-data-popup" style="display: none;">
-        <div class="external-data-header">
-            <h3>External Media</h3>
-            <button id="close-external-viewer" class="close-viewer-btn">x</button>
+        <div class="external-data-popup-content"> 
+            <div class="external-data-header">
+                <h3>External Media</h3>
+                <button id="close-external-viewer" class="close-viewer-btn">x</button>
+            </div>
+            <div id="external-data-content" class="external-data-list"></div>
         </div>
-        <div id="external-data-content" class="external-data-list"></div>
     </div>
 
-    <div id="analysis-popup" class="import-popup-overlay" style="display: none;">
-        <div class="import-popup-content">
-            <h3>Analysis Feature Pending</h3><button id="cancel-analysis-btn">Close</button>
-        </div>
-    </div>
     <div id="jobs-popup" class="import-popup-overlay" style="display: none;">
         <div class="import-popup-content">
             <h3>Jobs Feature Pending</h3><button id="close-jobs-btn">Close</button>
