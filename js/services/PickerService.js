@@ -44,31 +44,53 @@ let _pickerLoadPromise = null;
 function _loadPicker() {
     if (_pickerLoadPromise) return _pickerLoadPromise;
 
-    _pickerLoadPromise = new Promise((resolve, reject) => {
+    _pickerLoadPromise = (async () => {
         // Already loaded?
-        if (globalThis.google?.picker) {
-            resolve();
-            return;
-        }
+        if (globalThis.google?.picker) return;
 
-        if (!globalThis.gapi) {
-            reject(new Error(
-                'Google API loader (gapi) not available. ' +
-                'Is the apps.google.com/api/js script tag present in index.html?'
-            ));
-            return;
-        }
+        // The loader (apis.google.com/js/api.js) is async — on the first click
+        // it may not have executed yet. Wait for `gapi` to appear instead of
+        // failing instantly.
+        await _waitForGapi(10000);
 
-        // gapi.load is callback-based; wrap it in our Promise.
-        gapi.load('picker', {
-            callback: () => resolve(),
-            onerror: () => reject(new Error('Failed to load the Google Picker library.')),
-            timeout: 15000,
-            ontimeout: () => reject(new Error('Timed out loading the Google Picker library.')),
+        // gapi.load is callback-based; wrap it in a Promise.
+        await new Promise((resolve, reject) => {
+            gapi.load('picker', {
+                callback: () => resolve(),
+                onerror: () => reject(new Error('Failed to load the Google Picker library.')),
+                timeout: 15000,
+                ontimeout: () => reject(new Error('Timed out loading the Google Picker library.')),
+            });
         });
-    });
+    })();
 
     return _pickerLoadPromise;
+}
+
+/**
+ * Poll until `globalThis.gapi` is defined or the timeout elapses.
+ *
+ * @param {number} timeoutMs
+ * @returns {Promise<void>}
+ */
+function _waitForGapi(timeoutMs) {
+    return new Promise((resolve, reject) => {
+        if (globalThis.gapi) { resolve(); return; }
+
+        const start = Date.now();
+        const tick = setInterval(() => {
+            if (globalThis.gapi) {
+                clearInterval(tick);
+                resolve();
+            } else if (Date.now() - start > timeoutMs) {
+                clearInterval(tick);
+                reject(new Error(
+                    'Google API loader (gapi) did not load. Check that ' +
+                    'https://apis.google.com/js/api.js is reachable and not blocked.'
+                ));
+            }
+        }, 150);
+    });
 }
 
 // ---------------------------------------------------------------------------
