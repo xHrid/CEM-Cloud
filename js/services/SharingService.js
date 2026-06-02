@@ -148,12 +148,15 @@ async function _pushAllProjectMedia(project, rootFolderId) {
  * @param {string} fileId
  */
 function _setMediaDriveId(project, relPath, fileId) {
+    // Bump timestamp alongside the drive_id so the version carrying the public
+    // ID always wins last-write-wins merges (see SharedMediaSync._recordDriveId).
+    const now = new Date().toISOString();
     for (const spot of (project.spots || [])) {
-        if (spot.image_local_filename === relPath) spot.image_drive_id = fileId;
-        if (spot.audio_local_filename === relPath) spot.audio_drive_id = fileId;
+        if (spot.image_local_filename === relPath) { spot.image_drive_id = fileId; spot.timestamp = now; }
+        if (spot.audio_local_filename === relPath) { spot.audio_drive_id = fileId; spot.timestamp = now; }
     }
     for (const site of (project.sites || [])) {
-        if (site.kml_filename === relPath) site.kml_drive_id = fileId;
+        if (site.kml_filename === relPath) { site.kml_drive_id = fileId; site.timestamp = now; }
     }
 }
 
@@ -643,10 +646,10 @@ export async function pushToSharedProject(projectId) {
     remote.spots          = _mergeArray(remote.spots,          localNs.spots);
     remote.routes         = _mergeArray(remote.routes,         localNs.routes);
     remote.sites          = _mergeArray(remote.sites,          localNs.sites);
-    remote.external_files = _mergeArray(remote.external_files, localNs.external_files);
     remote.name       = remote.name       || project.name;
     remote.created_at = remote.created_at || project.created_at;
-    delete remote.shared;   // never leak local collaboration metadata
+    delete remote.external_files; // external media is never shared — strip paths
+    delete remote.shared;         // never leak local collaboration metadata
     delete remote.sharing;
 
     const blob = new Blob([JSON.stringify(remote, null, 2)], { type: 'application/json' });

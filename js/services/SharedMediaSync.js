@@ -23,7 +23,6 @@ import * as MasterData from '../data/MasterData.js';
 import * as StorageAdapter from '../data/StorageAdapter.js';
 import { getProjectFolderName } from '../data/projectUtils.js';
 import { getAccessToken } from './AuthService.js';
-import { isImportedMediaSyncEnabled } from './SyncEngine.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -65,10 +64,11 @@ export function initSharedMediaSync() {
     EventBus.on(EVENTS.MEDIA_SAVED, ({ data }) => {
         const { projectId, relPath, isExternal } = data;
 
-        // Imported/external media is opt-in via the single global toggle.
-        // In-app captures (spot photos/audio, KML) always sync.
-        if (isExternal && !isImportedMediaSyncEnabled()) {
-            console.log('[SharedMediaSync] Imported-media sync OFF — skipping:', relPath);
+        // External/imported media (referenced OR copied) is NEVER uploaded or
+        // shared — no blobs, no paths. Only in-app captures (spot photos/audio,
+        // site KML) sync to Drive.
+        if (isExternal) {
+            console.log('[SharedMediaSync] External media — never synced:', relPath);
             return;
         }
 
@@ -109,9 +109,6 @@ export function initSharedMediaSync() {
         setTimeout(() => _catchUpUnsyncedMedia(), 5000);
     });
 
-    // User just enabled imported-media sync → push existing external files now.
-    EventBus.on(EVENTS.SYNC_IMPORTED_MEDIA_ENABLED, () => _catchUpUnsyncedMedia());
-
     // Also try catch-up when data updates (covers post-login scenarios)
     let _catchUpDone = false;
     EventBus.on(EVENTS.DATA_UPDATED, () => {
@@ -147,13 +144,7 @@ async function _catchUpUnsyncedMedia() {
         if (site.kml_filename) mediaPaths.push(site.kml_filename);
     }
 
-    // Imported/external files only when the global toggle is ON.
-    if (isImportedMediaSyncEnabled()) {
-        for (const f of (project.external_files || [])) {
-            if (f.is_reference) continue;       // reference-only — nothing to upload
-            if (f.local_path)   mediaPaths.push(f.local_path);
-        }
-    }
+    // external_files are intentionally excluded — external media never syncs.
 
     if (mediaPaths.length === 0) return;
 
@@ -415,17 +406,22 @@ async function _pushToOwnProjectFolder(project, relPath) {
  */
 function _recordDriveId(project, relPath, fileId) {
     let changed = false;
+    // Bump timestamp when a new drive_id is stamped so last-write-wins merges
+    // carry the drive_id across to the other collaborator (a plain field edit
+    // does NOT change the item's timestamp, so without this the public ID is
+    // dropped on merge and the media never shows on the other side).
+    const now = new Date().toISOString();
     for (const spot of (project.spots || [])) {
         if (spot.image_local_filename === relPath && spot.image_drive_id !== fileId) {
-            spot.image_drive_id = fileId; changed = true;
+            spot.image_drive_id = fileId; spot.timestamp = now; changed = true;
         }
         if (spot.audio_local_filename === relPath && spot.audio_drive_id !== fileId) {
-            spot.audio_drive_id = fileId; changed = true;
+            spot.audio_drive_id = fileId; spot.timestamp = now; changed = true;
         }
     }
     for (const site of (project.sites || [])) {
         if (site.kml_filename === relPath && site.kml_drive_id !== fileId) {
-            site.kml_drive_id = fileId; changed = true;
+            site.kml_drive_id = fileId; site.timestamp = now; changed = true;
         }
     }
     if (changed) {

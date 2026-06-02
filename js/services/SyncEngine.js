@@ -14,8 +14,9 @@
  *     - master_data.json + the active project_data.json   (cheap, always)
  *     - in-app captured media: spot photos, audio, site KML (via SharedMediaSync)
  *
- *   WHAT is opt-in (one global toggle, default OFF):
- *     - imported / external media (the "Import Media" files — can be GBs)
+ *   WHAT never syncs:
+ *     - imported / external media (referenced or copied) — never uploaded,
+ *       never shared, paths never leave this device.
  *
  * WHEN it syncs (API-frugal — no aggressive polling, no server pings):
  *     - on STORAGE_READY + auth  → one pull/conflict check
@@ -28,8 +29,7 @@
  * wired in ProjectUI.js. The engine never resolves silently.
  *
  * Public exports:
- *   initSyncEngine(), flush(), getSyncState(),
- *   isImportedMediaSyncEnabled(), setImportedMediaSync()
+ *   initSyncEngine(), flush(), getSyncState()
  */
 
 import EventBus, { EVENTS } from '../core/EventBus.js';
@@ -51,9 +51,6 @@ const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 /** Pseudo-realtime pull cadence for the active SHARED project. */
 const POLL_MS = 30 * 1000; // 30 seconds
 
-/** localStorage key for the single "sync imported media" preference. */
-const IMPORTED_MEDIA_KEY = 'cem-sync-imported-media';
-
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
@@ -71,38 +68,14 @@ let _lastSharedSyncId = null;
 let _sharedSyncBusy   = false;
 
 // ---------------------------------------------------------------------------
-// Settings — single global toggle for imported/external media
-// ---------------------------------------------------------------------------
-
-/**
- * @returns {boolean} Whether imported/external media auto-syncs to Drive.
- */
-export function isImportedMediaSyncEnabled() {
-    return localStorage.getItem(IMPORTED_MEDIA_KEY) === '1';
-}
-
-/**
- * Set the global imported-media sync preference.
- * Turning it ON triggers a one-off catch-up scan so existing external files
- * get pushed.
- *
- * @param {boolean} on
- */
-export function setImportedMediaSync(on) {
-    localStorage.setItem(IMPORTED_MEDIA_KEY, on ? '1' : '0');
-    _emitStatus();
-    if (on) EventBus.emit(EVENTS.SYNC_IMPORTED_MEDIA_ENABLED);
-}
-
-// ---------------------------------------------------------------------------
 // Status helpers
 // ---------------------------------------------------------------------------
 
 /**
- * @returns {{ status: string, importedMedia: boolean, dirty: boolean }}
+ * @returns {{ status: string, dirty: boolean }}
  */
 export function getSyncState() {
-    return { status: _status, importedMedia: isImportedMediaSyncEnabled(), dirty: _dirty };
+    return { status: _status, dirty: _dirty };
 }
 
 function _setStatus(s) {
@@ -114,7 +87,6 @@ function _setStatus(s) {
 function _emitStatus() {
     EventBus.emit(EVENTS.SYNC_STATUS, {
         status: _status,
-        importedMedia: isImportedMediaSyncEnabled(),
         dirty: _dirty,
     });
 }

@@ -747,6 +747,9 @@ export async function pushProjectDataToDrive(project) {
         if (projectData.shared?.isImported) {
             delete projectData.shared;
         }
+        // External/imported media is never shared — drop it (and its paths)
+        // entirely from project_data.json.
+        delete projectData.external_files;
 
         // For a SHARED (collaborative) project, editors write into this same
         // project_data.json. Merge their remote edits in before we overwrite,
@@ -759,7 +762,7 @@ export async function pushProjectDataToDrive(project) {
                     projectData.spots          = _mergeItemArray(projectData.spots,          remote.spots);
                     projectData.routes         = _mergeItemArray(projectData.routes,         remote.routes);
                     projectData.sites          = _mergeItemArray(projectData.sites,          remote.sites);
-                    projectData.external_files = _mergeItemArray(projectData.external_files, remote.external_files);
+                    // external_files intentionally NOT merged — never shared.
                 } catch { /* unreadable remote — fall back to local */ }
             }
         }
