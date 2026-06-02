@@ -205,14 +205,18 @@ function _initImportModal() {
         pickBtn.textContent = 'Opening Drive...';
         pickBtn.disabled = true;
 
+        // CRITICAL: the import dialog is a native <dialog> shown with
+        // showModal(), which lives in the browser top-layer. The Google Picker
+        // is a normal DOM overlay and would render BEHIND it. Close the dialog
+        // first so the Picker is visible and clickable.
+        closeModal('import-project-dialog');
+
         try {
             const folder = await pickSharedFolder();
             if (!folder) return; // user cancelled the picker
 
-            pickBtn.textContent = 'Importing...';
             const project = await importSharedProject(folder.id);
             showToast(`Imported "${project.name}" successfully!`, 'success');
-            closeModal('import-project-dialog');
         } catch (err) {
             console.error('[SharingUI] Picker import failed:', err);
             showToast(`Import failed: ${err.message}`, 'failed');

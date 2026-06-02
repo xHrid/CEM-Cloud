@@ -26,8 +26,10 @@ import { getAccessToken }          from '../services/AuthService.js';
 import {
     findOrCreateRootFolder,
     findFileByName,
+    readDriveTextFile,
     updateDriveFile,
     uploadFile,
+    upsertFile,
     ensureDrivePath
 } from '../services/DriveService.js';
 
@@ -686,25 +688,20 @@ export async function pushMasterToDrive() {
 
     try {
         const rootFolderId = await findOrCreateRootFolder();
-        const driveFile    = await findFileByName('master_data.json', rootFolderId);
         const state        = MasterData.getLocalState();
         // Strip imported projects — they belong to other users, not our Drive
         const cleanState = {
             ...state,
             projects: (state.projects || []).filter(p => !p.shared?.isImported),
         };
-        const blob         = new Blob(
+        const blob = new Blob(
             [JSON.stringify(cleanState, null, 2)],
             { type: 'application/json' }
         );
 
-        if (driveFile) {
-            await updateDriveFile(driveFile.id, blob);
-            console.log('StorageAdapter: auto-pushed master JSON to Drive.');
-        } else {
-            await uploadFile(blob, 'master_data.json', 'application/json', rootFolderId);
-            console.log('StorageAdapter: created master JSON on Drive.');
-        }
+        // Idempotent upsert → never creates a duplicate master_data.json.
+        await upsertFile('master_data.json', rootFolderId, blob, 'application/json', 'master_data.json');
+        console.log('Repository: pushed master JSON to Drive.');
     } catch (e) {
         console.error('Repository.pushMasterToDrive: auto-push failed (offline?):', e);
     }
@@ -744,11 +741,27 @@ export async function pushProjectDataToDrive(project) {
         const folderId      = await ensureDrivePath([projectFolder], rootFolderId);
 
         // Build clean project data (strip local sharing/import metadata)
-        const projectData = { ...project };
+        let projectData = { ...project };
         delete projectData.sharing; // Owner-only metadata, not for recipients
         // Keep shared metadata only if it's the owner's project (not imported)
         if (projectData.shared?.isImported) {
             delete projectData.shared;
+        }
+
+        // For a SHARED (collaborative) project, editors write into this same
+        // project_data.json. Merge their remote edits in before we overwrite,
+        // so an owner push never clobbers editor changes.
+        if (project.sharing?.isShared) {
+            const existing = await findFileByName('project_data.json', folderId);
+            if (existing) {
+                try {
+                    const remote = JSON.parse(await readDriveTextFile(existing.id));
+                    projectData.spots          = _mergeItemArray(projectData.spots,          remote.spots);
+                    projectData.routes         = _mergeItemArray(projectData.routes,         remote.routes);
+                    projectData.sites          = _mergeItemArray(projectData.sites,          remote.sites);
+                    projectData.external_files = _mergeItemArray(projectData.external_files, remote.external_files);
+                } catch { /* unreadable remote — fall back to local */ }
+            }
         }
 
         const blob = new Blob(
@@ -756,16 +769,32 @@ export async function pushProjectDataToDrive(project) {
             { type: 'application/json' }
         );
 
-        const existing = await findFileByName('project_data.json', folderId);
-
-        if (existing) {
-            await updateDriveFile(existing.id, blob);
-        } else {
-            await uploadFile(blob, 'project_data.json', 'application/json', folderId);
-        }
+        // Idempotent upsert → exactly one project_data.json per folder.
+        await upsertFile('project_data.json', folderId, blob);
 
         console.log(`[Repository] Pushed project_data.json for "${project.name}".`);
     } catch (e) {
         console.error(`[Repository] pushProjectDataToDrive failed for "${project.name}":`, e);
     }
+}
+
+/**
+ * Merge two item arrays by id (spotId or id), keeping the newer `timestamp`
+ * when both sides share an id. Items unique to either side are kept.
+ *
+ * @param {object[]} a
+ * @param {object[]} b
+ * @returns {object[]}
+ */
+function _mergeItemArray(a = [], b = []) {
+    const map = new Map();
+    for (const item of [...(a || []), ...(b || [])]) {
+        const id = item.spotId || item.id;
+        if (!id) continue;
+        const prev = map.get(id);
+        const t    = new Date(item.timestamp || 0).getTime();
+        const pt   = new Date(prev?.timestamp || 0).getTime();
+        if (!prev || t > pt) map.set(id, item);
+    }
+    return Array.from(map.values());
 }

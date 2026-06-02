@@ -52,6 +52,25 @@ const folderCache = new Map();
  */
 let _rootFolderPromise = null;
 
+/**
+ * Resolved root-folder ID, cached for the whole session so we never create a
+ * second root folder (a cause of duplicate master_data.json on Drive).
+ * @type {string|null}
+ */
+let _rootFolderId = null;
+
+/**
+ * Idempotent upsert state for singleton named files (master_data.json,
+ * project_data.json). Key: `"${parentId}|${name}"`.
+ *
+ * Without this, two near-simultaneous pushes both run findFileByName, both get
+ * "not found" (Drive list is eventually consistent right after a create), and
+ * both create the file → duplicates. The pending-promise + id cache serialise
+ * the create so exactly one file ever exists per (parent, name).
+ */
+const _namedFileId      = new Map();   // key -> fileId (resolved)
+const _namedFilePending = new Map();   // key -> Promise<fileId> (create in flight)
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -121,16 +140,81 @@ async function fetchDrive(url, opts = {}, signal) {
  * @returns {Promise<string>} The Drive folder ID for the root folder.
  */
 export async function findOrCreateRootFolder() {
+    // Resolved once → reuse forever this session (prevents a 2nd root folder).
+    if (_rootFolderId) return _rootFolderId;
+
     // Return the in-flight promise if one is already pending
     if (_rootFolderPromise) return _rootFolderPromise;
 
     _rootFolderPromise = _findOrCreateRootFolderImpl();
 
     try {
-        return await _rootFolderPromise;
+        _rootFolderId = await _rootFolderPromise;
+        return _rootFolderId;
     } finally {
         // Always clear so future calls after an error can retry
         _rootFolderPromise = null;
+    }
+}
+
+/**
+ * Idempotent create-or-update for a singleton named file inside a folder.
+ *
+ * Guarantees exactly ONE file per (parentId, name) even under concurrent
+ * callers, by serialising the first create and caching the resolved file ID.
+ * Subsequent calls PATCH that file's content instead of creating a new one.
+ *
+ * Use this for master_data.json and project_data.json — never a bare
+ * findFileByName + uploadFile, which races into duplicates.
+ *
+ * @param {string} name      File name (e.g. 'master_data.json').
+ * @param {string} parentId  Drive folder ID.
+ * @param {Blob}   blob      New content.
+ * @param {string} [mimeType='application/json']
+ * @param {string|null} [relativePath]  Optional appProperty for media mapping.
+ * @returns {Promise<string>} The file's Drive ID.
+ */
+export async function upsertFile(name, parentId, blob, mimeType = 'application/json', relativePath = null) {
+    const key = `${parentId}|${name}`;
+
+    // Known ID → just update content.
+    const knownId = _namedFileId.get(key);
+    if (knownId) {
+        try {
+            await updateDriveFile(knownId, blob);
+            return knownId;
+        } catch (err) {
+            // Stale (file deleted on Drive) — drop cache and re-resolve below.
+            _namedFileId.delete(key);
+        }
+    }
+
+    // A create is already in flight for this key → wait, then write our content.
+    if (_namedFilePending.has(key)) {
+        const id = await _namedFilePending.get(key);
+        await updateDriveFile(id, blob);
+        _namedFileId.set(key, id);
+        return id;
+    }
+
+    // First resolver: find existing or create, writing content in both branches.
+    const pending = (async () => {
+        const existing = await findFileByName(name, parentId);
+        if (existing) {
+            await updateDriveFile(existing.id, blob);
+            return existing.id;
+        }
+        const created = await uploadFile(blob, name, mimeType, parentId, relativePath);
+        return created.id;
+    })();
+
+    _namedFilePending.set(key, pending);
+    try {
+        const id = await pending;
+        _namedFileId.set(key, id);
+        return id;
+    } finally {
+        _namedFilePending.delete(key);
     }
 }
 
@@ -469,7 +553,10 @@ export async function uploadFile(blob, filename, mimeType, parentId, relativePat
  */
 export function clearCache() {
     folderCache.clear();
-    console.log('[DriveService] Folder cache cleared.');
+    _namedFileId.clear();
+    _namedFilePending.clear();
+    _rootFolderId = null;
+    console.log('[DriveService] Folder + file caches cleared.');
 }
 
 // ---------------------------------------------------------------------------

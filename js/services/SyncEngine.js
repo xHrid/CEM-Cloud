@@ -146,9 +146,9 @@ export async function flush(reason = 'manual') {
         // Own JSON: master_data.json + active owner project_data.json.
         await pushMasterToDrive();
 
-        // If the active project is an imported EDITOR project, also push our
-        // editor_contributions.json so the owner sees our edits. (drive.file
-        // can't write the owner's project_data.json directly.)
+        // If the active project is an imported EDITOR project, merge-write our
+        // edits straight into the shared project_data.json (drive.file WRITE was
+        // granted when the editor opened the folder via the Picker).
         const active = _activeProject();
         if (active?.shared?.isImported && active.shared.permission === 'writer') {
             const { pushToSharedProject } = await import('./SharingService.js');

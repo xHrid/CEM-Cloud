@@ -552,16 +552,16 @@ async function _pullMediaFromSharedFolder(project) {
 }
 
 /**
- * Push local changes from an imported editor project back to the shared folder.
+ * Push an editor's local changes back into the shared project_data.json.
  *
- * Creates/updates `editor_contributions.json` — a file OWNED by the editor.
- * Because `drive.file` scope can only update files the app itself created,
- * editors cannot modify the owner's `project_data.json`. Instead, each editor
- * writes their own contribution file which the owner merges on sync.
+ * Single-file model: there is ONE project_data.json per shared folder, and
+ * everyone (owner + editors) reads/merges/writes the same file. The editor
+ * gained drive.file WRITE access to it by opening the folder via the Picker,
+ * so no separate `editor_contributions.json` is needed anymore.
  *
- * Strategy:
- *  - Find existing `editor_contributions.json` owned by ME → update it.
- *  - If none found → create a new one in the shared folder.
+ * Read-modify-write: we pull the current remote, merge our local data in
+ * (last-write-wins by item timestamp), and PATCH the same file — so we never
+ * clobber edits made by the owner or other editors.
  *
  * @param {string} projectId  Local UUID of the imported project.
  * @returns {Promise<void>}
@@ -577,81 +577,47 @@ export async function pushToSharedProject(projectId) {
         throw new Error('You only have viewer access. Cannot push changes.');
     }
 
-    const { sourceFolderId, sourceProjectId } = project.shared;
+    const { sourceFolderId } = project.shared;
 
-    // Build contribution payload — editor's current view of all data
-    // Remap local paths back to owner's folder paths for compatibility
-    const contribution = {
-        sourceProjectId,
-        editorLocalId: project.id,
-        contributedAt: new Date().toISOString(),
-        spots: JSON.parse(JSON.stringify(project.spots || [])),
-        routes: JSON.parse(JSON.stringify(project.routes || [])),
-        sites: JSON.parse(JSON.stringify(project.sites || [])),
-        external_files: JSON.parse(JSON.stringify(project.external_files || [])),
-    };
-
-    const localFolder = getProjectFolderName(project);
-    const ownerFolder = project.shared.ownerFolderName;
-    if (ownerFolder) {
-        _remapMediaPaths(contribution, localFolder, ownerFolder);
+    // Locate the single shared project_data.json.
+    let fileId = project.shared.projectDataFileId || null;
+    if (!fileId) {
+        const f = await DriveService.findFileByName('project_data.json', sourceFolderId);
+        fileId = f?.id || null;
     }
 
-    const blob = new Blob(
-        [JSON.stringify(contribution, null, 2)],
-        { type: 'application/json' }
-    );
-
-    // Try to find OUR existing contribution file (we own it → can update)
-    // NOTE: drive.file scope can only see files created by THIS app.
-    // We search with 'me' in owners so we only find our own file.
-    let myFile = null;
-    try {
-        myFile = await DriveService.findMyFileByName(
-            'editor_contributions.json',
-            sourceFolderId
-        );
-    } catch (err) {
-        // drive.file scope may not find files in shared folders via query —
-        // fall through to create path
-        console.warn('[SharingService] findMyFileByName failed (expected with drive.file):', err.message);
-    }
-
-    if (myFile) {
-        // Update our own file (drive.file allows this — we created it)
-        await DriveService.updateDriveFile(myFile.id, blob);
-        console.log('[SharingService] Updated existing editor_contributions.json:', myFile.id);
-    } else {
-        // Check if we previously stored the contribution file ID
-        if (project.shared.contributionFileId) {
-            try {
-                await DriveService.updateDriveFile(project.shared.contributionFileId, blob);
-                console.log('[SharingService] Updated editor_contributions.json via stored ID:', project.shared.contributionFileId);
-            } catch (updateErr) {
-                console.warn('[SharingService] Stored file ID stale, creating new:', updateErr.message);
-                const newFile = await DriveService.uploadFile(
-                    blob,
-                    'editor_contributions.json',
-                    'application/json',
-                    sourceFolderId
-                );
-                project.shared.contributionFileId = newFile.id;
-                console.log('[SharingService] Created new editor_contributions.json:', newFile.id);
-            }
-        } else {
-            // Create new contribution file in shared folder
-            const newFile = await DriveService.uploadFile(
-                blob,
-                'editor_contributions.json',
-                'application/json',
-                sourceFolderId
-            );
-            // Store the file ID so we can update it next time without needing to query
-            project.shared.contributionFileId = newFile.id;
-            console.log('[SharingService] Created new editor_contributions.json:', newFile.id);
+    // Read current remote so the merge doesn't clobber others' edits.
+    let remote = { spots: [], routes: [], sites: [], external_files: [] };
+    if (fileId) {
+        try {
+            remote = JSON.parse(await DriveService.readDriveTextFile(fileId));
+        } catch (e) {
+            console.warn('[SharingService] Could not read shared project_data.json:', e.message);
         }
     }
 
+    // Our local data uses OUR folder namespace; the shared file uses the
+    // owner's. Remap local → owner before merging.
+    const localFolder = getProjectFolderName(project);
+    const ownerFolder = project.shared.ownerFolderName || localFolder;
+    const localNs = JSON.parse(JSON.stringify(project));
+    _remapMediaPaths(localNs, localFolder, ownerFolder);
+
+    remote.spots          = _mergeArray(remote.spots,          localNs.spots);
+    remote.routes         = _mergeArray(remote.routes,         localNs.routes);
+    remote.sites          = _mergeArray(remote.sites,          localNs.sites);
+    remote.external_files = _mergeArray(remote.external_files, localNs.external_files);
+    remote.name       = remote.name       || project.name;
+    remote.created_at = remote.created_at || project.created_at;
+    delete remote.shared;   // never leak local collaboration metadata
+    delete remote.sharing;
+
+    const blob = new Blob([JSON.stringify(remote, null, 2)], { type: 'application/json' });
+
+    // Write back to the SAME file (idempotent upsert — no duplicates).
+    fileId = await DriveService.upsertFile('project_data.json', sourceFolderId, blob);
+
+    project.shared.projectDataFileId = fileId;
     project.shared.lastPushedAt = new Date().toISOString();
     project.shared.lastSyncedAt = new Date().toISOString();
     await MasterData.saveMasterData();
@@ -718,11 +684,11 @@ export async function pushMediaToSharedFolder(projectId, relPath) {
 }
 
 /**
- * Pull editor contributions from a shared project folder (owner-side).
+ * Owner-side pull: read the shared project_data.json (which editors now edit
+ * directly) and merge their changes into the local project.
  *
- * Reads all `editor_contributions.json` files in the project folder,
- * merges their data into the local project, then pushes updated
- * `project_data.json` back to Drive.
+ * Single-file model — no editor_contributions.json. The owner's folder
+ * namespace equals the local namespace, so no path remapping is needed.
  *
  * @param {string} projectId  Local UUID of the owner's project.
  * @returns {Promise<{merged: boolean, contributionCount: number}>}
@@ -733,56 +699,38 @@ export async function pullEditorContributions(projectId) {
 
     if (!project) throw new Error(`Project "${projectId}" not found.`);
 
-    // Determine folder ID — owner's project uses sharing.driveFolderId
     const folderId = project.sharing?.driveFolderId;
     if (!folderId) {
         return { merged: false, contributionCount: 0 };
     }
 
-    // Find all editor_contributions.json files in folder
-    const contribFiles = await DriveService.findFilesByPrefix(
-        'editor_contributions',
-        folderId
-    );
-
-    if (contribFiles.length === 0) {
+    const file = await DriveService.findFileByName('project_data.json', folderId);
+    if (!file) {
         return { merged: false, contributionCount: 0 };
     }
 
-    let mergedAny = false;
-
-    for (const file of contribFiles) {
-        try {
-            const text = await DriveService.readDriveTextFile(file.id);
-            const contrib = JSON.parse(text);
-
-            // Merge each collection
-            project.spots          = _mergeArray(project.spots,          contrib.spots);
-            project.routes         = _mergeArray(project.routes,         contrib.routes);
-            project.sites          = _mergeArray(project.sites,          contrib.sites);
-            project.external_files = _mergeArray(project.external_files, contrib.external_files);
-
-            mergedAny = true;
-            console.log(`[SharingService] Merged contributions from ${file.name} (${file.id})`);
-        } catch (err) {
-            console.warn(`[SharingService] Failed to read contribution ${file.id}:`, err);
-        }
+    let remote;
+    try {
+        remote = JSON.parse(await DriveService.readDriveTextFile(file.id));
+    } catch (err) {
+        console.warn('[SharingService] Could not read project_data.json:', err.message);
+        return { merged: false, contributionCount: 0 };
     }
 
-    if (mergedAny) {
-        await MasterData.saveMasterData();
+    // Merge editor edits into local (same namespace).
+    project.spots          = _mergeArray(project.spots,          remote.spots);
+    project.routes         = _mergeArray(project.routes,         remote.routes);
+    project.sites          = _mergeArray(project.sites,          remote.sites);
+    project.external_files = _mergeArray(project.external_files, remote.external_files);
 
-        // Push updated project_data.json back to Drive so editors get merged view
-        await pushProjectDataToDrive(project);
+    await MasterData.saveMasterData();
+    EventBus.emit(EVENTS.DATA_UPDATED);
+    EventBus.emit(EVENTS.PROJECT_CHANGED);
 
-        EventBus.emit(EVENTS.DATA_UPDATED);
-        EventBus.emit(EVENTS.PROJECT_CHANGED);
+    // Pull any media editors uploaded into the shared folder.
+    await _pullEditorMediaFromSharedFolder(project, folderId);
 
-        // Auto-pull media uploaded by editors into the shared folder
-        await _pullEditorMediaFromSharedFolder(project, folderId);
-    }
-
-    return { merged: mergedAny, contributionCount: contribFiles.length };
+    return { merged: true, contributionCount: 1 };
 }
 
 /**

@@ -433,13 +433,9 @@ export async function syncUp(relPath) {
     if (!fileBlob) throw new Error(`[SyncService] Local file not found: ${normPath}`);
 
     if (normPath === 'master_data.json') {
-        // Master JSON lives directly in the root folder
-        const existing = await DriveService.findFileByName('master_data.json', rootFolderId);
-        if (existing) {
-            await DriveService.updateDriveFile(existing.id, fileBlob);
-        } else {
-            await DriveService.uploadFile(fileBlob, 'master_data.json', 'application/json', rootFolderId, normPath);
-        }
+        // Master JSON lives directly in the root folder. Idempotent upsert
+        // prevents duplicate master_data.json under concurrent pushes.
+        await DriveService.upsertFile('master_data.json', rootFolderId, fileBlob, 'application/json', normPath);
         return;
     }
 
@@ -617,7 +613,7 @@ export async function checkForRemoteUpdates(interactive = false) {
                     [JSON.stringify(cleanState, null, 2)],
                     { type: 'application/json' }
                 );
-                await DriveService.uploadFile(blob, 'master_data.json', 'application/json', rootFolderId, 'master_data.json');
+                await DriveService.upsertFile('master_data.json', rootFolderId, blob, 'application/json', 'master_data.json');
                 EventBus.emit(EVENTS.TOAST_SHOW, { message: 'Master data uploaded to Drive.', type: 'success' });
             }
             return;
