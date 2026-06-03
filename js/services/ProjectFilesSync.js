@@ -28,6 +28,88 @@ import { getAllJobs, getJobResultFiles } from '../data/Repository.js';
 const _unfetchable = new Set();
 
 /**
+ * Max per-file size to inline as base64 inside project_data.json. A collaborator
+ * under drive.file can ONLY read the project_data.json they picked (API 404s on
+ * the owner's other files; the public download host has no CORS header). So the
+ * bytes of small media/results travel inline in that one readable file, and are
+ * decoded to local files on the other side. Larger files are skipped (rare).
+ */
+const MAX_INLINE_BYTES = 25 * 1024 * 1024;
+
+/** Blob -> "data:<mime>;base64,..." string. */
+function _blobToDataUri(blob) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(blob);
+    });
+}
+
+/** "data:...;base64,..." -> Blob (fetch on a data: URI is local, no CORS). */
+async function _dataUriToBlob(dataUri) {
+    const res = await fetch(dataUri);
+    return await res.blob();
+}
+
+/**
+ * Build the inline_files map for a project: { relPath -> dataURI } for every
+ * referenced file present locally and under the size cap. Keys are remapped via
+ * remapKey so they match the namespace used inside project_data.json (the
+ * owner's folder name).
+ *
+ * @param {object} project
+ * @param {(relPath:string)=>string} [remapKey]  local relPath -> json-key relPath
+ * @returns {Promise<Object<string,string>>}
+ */
+export async function buildInlineFiles(project, remapKey) {
+    const out = {};
+    for (const ref of enumerateFileRefs(project)) {
+        try {
+            const blob = await StorageAdapter.getFileBlob(ref.relPath);
+            if (!blob || blob.size === 0 || blob.size > MAX_INLINE_BYTES) continue;
+            const key = remapKey ? remapKey(ref.relPath) : ref.relPath;
+            out[key] = await _blobToDataUri(blob);
+        } catch (e) {
+            console.warn(`[ProjectFilesSync] inline encode failed "${ref.relPath}":`, e.message);
+        }
+    }
+    return out;
+}
+
+/**
+ * Decode an inline_files map to local files (skips ones already present).
+ * Keys are remapped via remapToLocal to this device's folder namespace.
+ *
+ * @param {Object<string,string>} inlineMap  { relPath -> dataURI }
+ * @param {(relPath:string)=>string} [remapToLocal]  json-key relPath -> local relPath
+ * @returns {Promise<number>} files written
+ */
+export async function applyInlineFiles(inlineMap, remapToLocal) {
+    if (!inlineMap || typeof inlineMap !== 'object') return 0;
+    let n = 0;
+    for (const [key, dataUri] of Object.entries(inlineMap)) {
+        try {
+            const localPath = remapToLocal ? remapToLocal(key) : key;
+            if (await StorageAdapter.checkFileExists(localPath)) continue;
+            const blob  = await _dataUriToBlob(dataUri);
+            if (!blob || blob.size === 0) continue;
+            const parts = localPath.split('/');
+            const name  = parts.pop();
+            await StorageAdapter.saveFile(blob, name, parts);
+            n++;
+        } catch (e) {
+            console.warn('[ProjectFilesSync] inline decode failed:', e.message);
+        }
+    }
+    if (n > 0) {
+        console.log(`[ProjectFilesSync] Decoded ${n} inline file(s) to local storage.`);
+        EventBus.emit(EVENTS.DATA_UPDATED);
+    }
+    return n;
+}
+
+/**
  * Enumerate every file the project references, as {relPath, driveId, kind}.
  * Covers spot image/audio, site KML, and job (json + result files).
  *

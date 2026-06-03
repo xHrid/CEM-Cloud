@@ -335,7 +335,8 @@ export async function importSharedProject(projectFileId) {
         myRole            = fileMeta.capabilities?.canEdit ? 'writer' : 'reader';
         const pdFile      = await DriveService.findFileByName('project_data.json', sourceFolderId);
         if (!pdFile) {
-            throw new Error('No project_data.json in that folder — select the shared PROJECT folder.');
+            throw new Error('Cannot list this folder under drive.file. Re-open it in the picker ' +
+                'and select the project_data.json FILE inside instead.');
         }
         projectDataFileId = pdFile.id;
     } else {
@@ -386,6 +387,17 @@ export async function importSharedProject(projectFileId) {
     const localFolder = getProjectFolderName(importedProject);
     importedProject.shared.ownerFolderName = ownerFolder;
     _remapMediaPaths(importedProject, ownerFolder, localFolder);
+
+    // Decode inline media/result bytes to local files, then drop the inline
+    // payload so it is never kept in local state.
+    try {
+        const { applyInlineFiles } = await import('./ProjectFilesSync.js');
+        const toLocal = (p) => p.startsWith(ownerFolder + '/') ? localFolder + p.substring(ownerFolder.length) : p;
+        await applyInlineFiles(sharedProject.inline_files, toLocal);
+    } catch (e) {
+        console.warn('[SharingService] inline decode failed:', e.message);
+    }
+    delete importedProject.inline_files;
 
     // Add to local state
     state.projects.push(importedProject);
@@ -483,6 +495,16 @@ export async function syncImportedProject(projectId) {
         const ownerFolder = localShared.ownerFolderName
             || getProjectFolderName({ ...updatedProject, id: updatedProject.id });
         const localFolder = getProjectFolderName(project);
+
+        // Decode inline media/result bytes into local files — the only channel a
+        // collaborator can read under drive.file.
+        try {
+            const { applyInlineFiles } = await import('./ProjectFilesSync.js');
+            const toLocal = (p) => p.startsWith(ownerFolder + '/') ? localFolder + p.substring(ownerFolder.length) : p;
+            await applyInlineFiles(updatedProject.inline_files, toLocal);
+        } catch (e) {
+            console.warn('[SharingService] inline decode failed:', e.message);
+        }
 
         // Remap remote data paths before merge
         const remoteForMerge = { ...updatedProject };
@@ -681,6 +703,16 @@ export async function pushToSharedProject(projectId) {
     delete remote.shared;         // never leak local collaboration metadata
     delete remote.sharing;
 
+    // Inline our local media/result bytes (keyed in the owner's namespace) so the
+    // owner + other collaborators can decode them locally under drive.file.
+    try {
+        const { buildInlineFiles } = await import('./ProjectFilesSync.js');
+        const toOwner = (p) => p.startsWith(localFolder + '/') ? ownerFolder + p.substring(localFolder.length) : p;
+        remote.inline_files = { ...(remote.inline_files || {}), ...(await buildInlineFiles(project, toOwner)) };
+    } catch (e) {
+        console.warn('[SharingService] inline build failed:', e.message);
+    }
+
     const blob = new Blob([JSON.stringify(remote, null, 2)], { type: 'application/json' });
 
     // Write back to the SAME file by ID (PATCH). Do NOT use findFileByName/
@@ -796,6 +828,14 @@ export async function pullEditorContributions(projectId) {
     } catch (err) {
         console.warn('[SharingService] Could not read project_data.json:', err.message);
         return { merged: false, contributionCount: 0 };
+    }
+
+    // Decode any inline media/result bytes an editor sent (same namespace).
+    try {
+        const { applyInlineFiles } = await import('./ProjectFilesSync.js');
+        await applyInlineFiles(remote.inline_files, null);
+    } catch (e) {
+        console.warn('[SharingService] inline decode failed:', e.message);
     }
 
     // Merge editor edits into local (same namespace).
