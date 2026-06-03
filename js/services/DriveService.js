@@ -619,6 +619,47 @@ export async function makeFilePublic(fileId) {
 }
 
 /**
+ * Fetch a file's bytes for LOCAL materialization.
+ *
+ * Tries, in order:
+ *  1. The authenticated Drive API (works for files THIS app created/opened —
+ *     e.g. the owner's own files under drive.file).
+ *  2. Public hot-link hosts (works cross-account for link-public files, which
+ *     shared media/results are): the image CDN for images, and the
+ *     usercontent download host for everything else.
+ *
+ * Returns null if every path fails (e.g. CORS blocks the host and the file
+ * isn't app-accessible) so callers can fall back gracefully.
+ *
+ * @param {string} fileId
+ * @param {string} [kind]  'image' | 'audio' | 'kml' | 'job' | 'result'
+ * @returns {Promise<Blob|null>}
+ */
+export async function fetchPublicBlob(fileId, kind = '') {
+    // 1) Authenticated API — succeeds for the owner / app-opened files.
+    try {
+        const blob = await downloadBlob(fileId);
+        if (blob && blob.size > 0) return blob;
+    } catch { /* cross-account under drive.file -> 404; try public hosts */ }
+
+    // 2) Public hosts (no auth). fetch() works only if the host sends CORS
+    //    headers; the image CDN does, the download host usually does.
+    const urls = [`https://drive.usercontent.google.com/download?id=${fileId}&export=download`];
+    if (kind === 'image') urls.unshift(`https://lh3.googleusercontent.com/d/${fileId}`);
+
+    for (const url of urls) {
+        try {
+            const res = await fetch(url);
+            if (res.ok) {
+                const blob = await res.blob();
+                if (blob && blob.size > 0) return blob;
+            }
+        } catch { /* CORS or network — try next */ }
+    }
+    return null;
+}
+
+/**
  * List all permissions on a Drive file/folder.
  *
  * @param {string} fileId  Drive file/folder ID.

@@ -56,6 +56,12 @@ function _remapMediaPaths(project, ownerFolderName, localFolderName) {
     for (const file of (project.external_files || [])) {
         file.local_path = remap(file.local_path);
     }
+    for (const job of (project.jobs || [])) {
+        job.job_file = remap(job.job_file);
+        for (const rf of (job.result_files || [])) {
+            rf.rel_path = remap(rf.rel_path);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +480,7 @@ export async function syncImportedProject(projectId) {
         project.spots          = _mergeArray(project.spots,          remoteForMerge.spots);
         project.routes         = _mergeArray(project.routes,         remoteForMerge.routes);
         project.sites          = _mergeArray(project.sites,          remoteForMerge.sites);
+        project.jobs           = _mergeArray(project.jobs,           remoteForMerge.jobs);
         project.external_files = _mergeArray(project.external_files, remoteForMerge.external_files);
 
         // Update scalar fields from remote
@@ -496,6 +503,15 @@ export async function syncImportedProject(projectId) {
         // Auto-pull media files referenced by public URL (drive.file can't list
         // the owner's folder, so path-based pulls are best-effort only).
         await _pullMediaFromSharedFolder(project);
+
+        // Download any shared media/results missing locally (public URL) so
+        // everything renders from a local copy — no "open file" buttons.
+        try {
+            const { materializeProjectFiles } = await import('./ProjectFilesSync.js');
+            await materializeProjectFiles(project);
+        } catch (e) {
+            console.warn('[SharingService] materialize after sync failed:', e.message);
+        }
     } else {
         throw new Error('Could not read the shared project_data.json (file may have been removed).');
     }
@@ -646,6 +662,7 @@ export async function pushToSharedProject(projectId) {
     remote.spots          = _mergeArray(remote.spots,          localNs.spots);
     remote.routes         = _mergeArray(remote.routes,         localNs.routes);
     remote.sites          = _mergeArray(remote.sites,          localNs.sites);
+    remote.jobs           = _mergeArray(remote.jobs,           localNs.jobs);
     remote.name       = remote.name       || project.name;
     remote.created_at = remote.created_at || project.created_at;
     delete remote.external_files; // external media is never shared — strip paths
@@ -763,6 +780,7 @@ export async function pullEditorContributions(projectId) {
     project.spots          = _mergeArray(project.spots,          remote.spots);
     project.routes         = _mergeArray(project.routes,         remote.routes);
     project.sites          = _mergeArray(project.sites,          remote.sites);
+    project.jobs           = _mergeArray(project.jobs,           remote.jobs);
     project.external_files = _mergeArray(project.external_files, remote.external_files);
 
     await MasterData.saveMasterData();
@@ -771,6 +789,14 @@ export async function pullEditorContributions(projectId) {
 
     // Pull any media editors uploaded into the shared folder.
     await _pullEditorMediaFromSharedFolder(project, folderId);
+
+    // Pull editor-added media/results locally (public URL) for local rendering.
+    try {
+        const { materializeProjectFiles } = await import('./ProjectFilesSync.js');
+        await materializeProjectFiles(project);
+    } catch (e) {
+        console.warn('[SharingService] materialize after editor pull failed:', e.message);
+    }
 
     return { merged: true, contributionCount: 1 };
 }

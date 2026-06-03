@@ -762,6 +762,7 @@ export async function pushProjectDataToDrive(project) {
                     projectData.spots          = _mergeItemArray(projectData.spots,          remote.spots);
                     projectData.routes         = _mergeItemArray(projectData.routes,         remote.routes);
                     projectData.sites          = _mergeItemArray(projectData.sites,          remote.sites);
+                    projectData.jobs           = _mergeItemArray(projectData.jobs,           remote.jobs);
                     // external_files intentionally NOT merged — never shared.
                 } catch { /* unreadable remote — fall back to local */ }
             }

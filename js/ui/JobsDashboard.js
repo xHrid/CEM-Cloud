@@ -29,6 +29,8 @@ import {
 }               from '../data/Repository.js';
 import { showToast } from './Toast.js';
 import { openModal, closeModal } from './ModalManager.js';
+import { getActiveProject } from '../data/MasterData.js';
+import { recordCompletedJobs, materializeProjectFiles } from '../services/ProjectFilesSync.js';
 
 // ---------------------------------------------------------------------------
 // Module-private state — DOM element cache (lazy)
@@ -118,6 +120,19 @@ export async function openJobsModal() {
     openModal('jobs-popup');
     if (els.viewerPlaceholder) els.viewerPlaceholder.style.display = 'block';
     if (els.viewerContent)     els.viewerContent.style.display     = 'none';
+
+    // Fold any newly-completed jobs into the project (queues their results for
+    // upload + share when shared), then pull down shared results we lack locally
+    // — so the list + previews render from local files for owner AND collaborators.
+    try {
+        const active = getActiveProject();
+        if (active) {
+            await recordCompletedJobs(active);
+            await materializeProjectFiles(active);
+        }
+    } catch (e) {
+        console.warn('[JobsDashboard] job/result sync skipped:', e.message);
+    }
 
     await _loadJobsSidebar();
 }

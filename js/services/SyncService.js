@@ -703,6 +703,20 @@ export async function resolveMasterConflict(action) {
             EventBus.emit(EVENTS.TOAST_SHOW, { message: 'Merged local and Drive data.', type: 'success' });
         }
 
+        // Media/results follow the metadata: after a Drive-wins pull or a merge,
+        // download anything referenced but missing locally and push local-only
+        // files up (bidirectional — see ProjectFilesSync.reconcileProjectFiles).
+        if (action === 'pull' || action === 'merge') {
+            try {
+                const { reconcileProjectFiles } = await import('./ProjectFilesSync.js');
+                const { getActiveProject } = await import('../data/MasterData.js');
+                const active = getActiveProject();
+                if (active) await reconcileProjectFiles(active);
+            } catch (e) {
+                console.warn('[SyncService] media reconcile after conflict failed:', e.message);
+            }
+        }
+
         remoteMasterCache = null;
 
         // Notify the rest of the app that data has changed
@@ -774,6 +788,7 @@ export function mergeDatasets(local, remote) {
                 spots:          _mergeArray(lp.spots,          rp.spots),
                 routes:         _mergeArray(lp.routes,         rp.routes),
                 sites:          _mergeArray(lp.sites,          rp.sites),
+                jobs:           _mergeArray(lp.jobs,           rp.jobs),
                 external_files: _mergeArray(lp.external_files, rp.external_files),
             });
         } else {

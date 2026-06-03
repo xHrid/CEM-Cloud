@@ -62,7 +62,7 @@ class WatcherConfig:
     root_path: Path
     watch_interval: int = 2
     job_timeout: int = 1800  # 30 minutes in seconds
-    pip_timeout: int = 3600  # 1 hour — tensorflow/birdnetlib are large
+    pip_timeout: Optional[int] = None  # None = no timeout (heavy deps: tensorflow/birdnetlib)
     heartbeat_file: str = "system/status.json"
     scripts_dir: str = "system/scripts"
     installed_registry: str = "system/scripts/installed.json"
@@ -658,6 +658,13 @@ class Watcher:
         signal.signal(signal.SIGINT, self._handle_signal)
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, self._handle_signal)
+        # Survive the controlling terminal closing: SIGHUP's default action is
+        # to kill the process (and its whole foreground group, including a
+        # running analysis child). Ignore it so closing the terminal no longer
+        # terminates the watcher. Still run detached (nohup/setsid/systemd) and
+        # redirect output, or log writes to the dead TTY can fail.
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     # ------------------------------------------------------------------
     # Entry point
@@ -727,8 +734,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pip-timeout",
         type=int,
-        default=3600,
-        help="Max seconds for venv dependency install (tensorflow/birdnetlib are large).",
+        default=None,
+        help="Max seconds for venv dependency install. Default: no timeout (deps are large).",
     )
     return parser.parse_args()
 

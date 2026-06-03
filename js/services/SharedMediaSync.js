@@ -424,6 +424,16 @@ function _recordDriveId(project, relPath, fileId) {
             site.kml_drive_id = fileId; site.timestamp = now; changed = true;
         }
     }
+    for (const job of (project.jobs || [])) {
+        if (job.job_file === relPath && job.job_file_drive_id !== fileId) {
+            job.job_file_drive_id = fileId; job.timestamp = now; changed = true;
+        }
+        for (const rf of (job.result_files || [])) {
+            if (rf.rel_path === relPath && rf.drive_id !== fileId) {
+                rf.drive_id = fileId; job.timestamp = now; changed = true;
+            }
+        }
+    }
     if (changed) {
         MasterData.saveMasterData();
         EventBus.emit(EVENTS.DATA_UPDATED); // re-push project_data.json with the IDs
