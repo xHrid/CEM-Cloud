@@ -36,7 +36,6 @@
 import EventBus, { EVENTS }          from '../core/EventBus.js';
 import { saveSpot, getLocalFileUrl, deleteSpot, deleteExternalFile } from '../data/Repository.js';
 import { getSpots, getExternalFiles } from '../data/MasterData.js';
-import * as DriveService from '../services/DriveService.js';
 import { getMap, getCurrentPosition } from './MapManager.js';
 import { showToast }                 from '../ui/Toast.js';
 import { openModal, closeModal }     from '../ui/ModalManager.js';
@@ -49,27 +48,23 @@ import { openModal, closeModal }     from '../ui/ModalManager.js';
 let _spotsLayer = null;
 
 /**
- * Resolve a public Drive media file to a displayable URL.
+ * Build a PUBLIC (unauthenticated) hot-link URL for a Drive media file.
  *
- * Used when the media isn't on this device (e.g. an editor viewing the owner's
- * audio/photo). The file was made link-public at share/sync time, so we fetch
- * the bytes via the authenticated Drive API and hand back an object URL — this
- * works reliably for BOTH images and audio, unlike the raw
- * drive.google.com/uc?export=download link (which audio elements fail to play).
- * Falls back to a public hot-link URL if the authenticated fetch fails.
+ * Why not the Drive API: this app uses the drive.file scope, which only grants
+ * API access to files THIS user created or opened via the Picker. A
+ * collaborator's media (e.g. an editor's photo viewed on the owner's side) is
+ * NOT in that set, so files.get?alt=media returns 404. Those files ARE made
+ * link-public at share/sync time, so the public hot-link URL works
+ * cross-account without the API.
  *
- * @param {string} fileId          Drive file ID (public).
- * @param {string} publicFallback  URL to use if the API fetch fails.
- * @returns {Promise<string>}
+ * @param {string} fileId  Drive file ID (link-public).
+ * @param {'image'|'audio'} kind
+ * @returns {string}
  */
-async function _driveMediaUrl(fileId, publicFallback) {
-    try {
-        const blob = await DriveService.downloadBlob(fileId);
-        return URL.createObjectURL(blob);
-    } catch (e) {
-        console.warn('[SpotManager] Drive media fetch failed, using public URL:', e.message);
-        return publicFallback;
-    }
+function _drivePublicUrl(fileId, kind) {
+    return kind === 'image'
+        ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`
+        : `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
 }
 
 // Audio recording state — encapsulated here (Bug 3 fix)
@@ -466,8 +461,7 @@ async function _showSpotDetails(spot) {
             if (url) {
                 imgContainer.innerHTML = `<img src="${url}" style="max-width:100%; border-radius:8px;">`;
             } else if (entry.image_drive_id) {
-                const pub = `https://drive.google.com/thumbnail?id=${entry.image_drive_id}&sz=w1600`;
-                const src = await _driveMediaUrl(entry.image_drive_id, pub);
+                const src = _drivePublicUrl(entry.image_drive_id, 'image');
                 imgContainer.innerHTML = `<img src="${src}" referrerpolicy="no-referrer" style="max-width:100%; border-radius:8px;">`;
             } else {
                 imgContainer.innerHTML = `<p style="font-size:0.8rem; color:red;">Image file missing from disk</p>`;
@@ -482,9 +476,17 @@ async function _showSpotDetails(spot) {
             if (url) {
                 audioContainer.innerHTML = `<audio controls src="${url}" style="width:100%;"></audio>`;
             } else if (entry.audio_drive_id) {
-                const pub = `https://drive.usercontent.google.com/download?id=${entry.audio_drive_id}&export=download`;
-                const src = await _driveMediaUrl(entry.audio_drive_id, pub);
-                audioContainer.innerHTML = `<audio controls src="${src}" style="width:100%;"></audio>`;
+                // drive.file can't fetch a collaborator's audio via the API
+                // (404), so play the link-public file directly. Two hosts + a
+                // download link in case inline playback is blocked.
+                const dl = `https://drive.usercontent.google.com/download?id=${entry.audio_drive_id}&export=download`;
+                const uc = `https://drive.google.com/uc?export=download&id=${entry.audio_drive_id}`;
+                audioContainer.innerHTML =
+                    `<audio controls style="width:100%;">` +
+                        `<source src="${dl}">` +
+                        `<source src="${uc}">` +
+                    `</audio>` +
+                    `<a href="${dl}" target="_blank" rel="noopener" style="font-size:0.8rem; display:inline-block; margin-top:4px;">Open audio ↗</a>`;
             }
         }
     }

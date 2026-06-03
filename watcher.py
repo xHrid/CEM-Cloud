@@ -62,6 +62,7 @@ class WatcherConfig:
     root_path: Path
     watch_interval: int = 2
     job_timeout: int = 1800  # 30 minutes in seconds
+    pip_timeout: int = 3600  # 1 hour — tensorflow/birdnetlib are large
     heartbeat_file: str = "system/status.json"
     scripts_dir: str = "system/scripts"
     installed_registry: str = "system/scripts/installed.json"
@@ -262,16 +263,24 @@ class WatcherSetup:
             logger.info("Installing dependencies in venv...")
             self.update_heartbeat("installing_dependencies")
             subprocess.run(
-                [cfg.venv_python, "-m", "pip", "install", "-r", str(req_path)],
+                [cfg.venv_python, "-m", "pip", "install",
+                 "--prefer-binary", "--no-input", "-r", str(req_path)],
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=600,
+                timeout=cfg.pip_timeout,
             )
             cfg.req_hash_path.write_text(new_hash)
             logger.info("Environment setup complete.")
         except subprocess.CalledProcessError as exc:
-            logger.warning("Pip install failed: %s", exc.stderr)
+            logger.error("Pip install failed (deps incomplete): %s", exc.stderr)
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "Pip install timed out after %ds — deps incomplete. "
+                "Raise --pip-timeout (tensorflow+birdnetlib are large). "
+                "Req hash NOT saved, so install retries on next start.",
+                cfg.pip_timeout,
+            )
         except Exception as exc:
             logger.warning("Failed to setup requirements: %s", exc)
 
@@ -715,6 +724,12 @@ def parse_args() -> argparse.Namespace:
         default=1800,
         help="Maximum seconds a single job script may run before being killed.",
     )
+    parser.add_argument(
+        "--pip-timeout",
+        type=int,
+        default=3600,
+        help="Max seconds for venv dependency install (tensorflow/birdnetlib are large).",
+    )
     return parser.parse_args()
 
 
@@ -724,6 +739,7 @@ def main() -> None:
         root_path=args.root_path.resolve(),
         watch_interval=args.watch_interval,
         job_timeout=args.job_timeout,
+        pip_timeout=args.pip_timeout,
     )
     Watcher(cfg).run()
 
