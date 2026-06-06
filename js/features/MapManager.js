@@ -203,12 +203,47 @@ export function initMap() {
         console.warn('[MapManager] Tile failed to load:', ev?.coords);
     });
 
+    // Dedicated high pane so the "you are here" marker always sits ABOVE spot
+    // and route layers (all of which live in the default overlayPane, z-index
+    // 400). 650 keeps us over them but under popups (700).
+    _map.createPane('userLocation');
+    _map.getPane('userLocation').style.zIndex = 650;
+
     _attachLocationHandlers(_map);
     _attachLongPressCopy(_map);
+    _attachLatLonPillClick();
 
     _startGeolocation();
 
     console.log('[MapManager] Map initialised.');
+}
+
+/**
+ * Make the lat/lon pill a "center on me" control: tapping it flies the map to
+ * the user's current location.
+ */
+function _attachLatLonPillClick() {
+    const pill = document.getElementById('latlon');
+    if (!pill) return;
+    pill.addEventListener('click', () => centerOnCurrentLocation());
+}
+
+/**
+ * Fly to + center on the user's current location. No-op (with a hint) before a
+ * fix exists.
+ */
+export function centerOnCurrentLocation() {
+    if (!_map) return;
+    if (!_locationMarker || (_currLat === 0 && _currLng === 0)) {
+        EventBus.emit(EVENTS.TOAST_SHOW, {
+            message: 'Still finding your location — try again in a moment.',
+            type: 'info',
+        });
+        return;
+    }
+    const targetZoom = Math.max(_map.getZoom(), 16);
+    _map.flyTo([_currLat, _currLng], targetZoom, { duration: 0.6 });
+    _locationMarker.bringToFront();
 }
 
 /**
@@ -247,12 +282,14 @@ function _applyPosition(lat, lng) {
     _geoErrorNotified = false; // a good fix arrived — allow future error toasts again
 
     const label = document.querySelector('#latlon label');
-    if (label) label.textContent = `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
+    // Leading crosshair hints the pill is tappable ("center on me").
+    if (label) label.textContent = `◎ Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
 
     const latlng = L.latLng(lat, lng);
     if (!_locationMarker) {
         _locationMarker = L.circleMarker(latlng, {
             radius: 8, color: '#ffffff', fillColor: '#2196F3', fillOpacity: 1, weight: 2,
+            pane: 'userLocation',   // always render above spots/routes
         }).addTo(_map).bindPopup('You are here');
     } else {
         _locationMarker.setLatLng(latlng);

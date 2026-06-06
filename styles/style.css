@@ -312,7 +312,7 @@ input[type="checkbox"], input[type="radio"] {
     background-color: var(--forest-deep); color: var(--on-accent);
     padding: 7px 16px; border-radius: var(--radius-pill);
     font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 0.02em;
-    z-index: 900; pointer-events: none; box-shadow: var(--shadow-soft);
+    z-index: 900; pointer-events: auto; cursor: pointer; box-shadow: var(--shadow-soft);
     white-space: nowrap; max-width: 92vw;
 }
 #latlon label { font-family: var(--font-mono); white-space: nowrap; }
@@ -720,3 +720,42 @@ body.panel-open #theme-toggle { opacity: 0; pointer-events: none; transform: tra
 @media (max-width: 380px) {
     .analysis-spot-grid { grid-template-columns: 1fr; }
 }
+
+
+/* =========================================
+   13. INTERACTION POLISH
+   ========================================= */
+
+/* Lat/Lon pill is a "center on me" button — give it press affordance */
+#latlon { transition: background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast); }
+#latlon:hover { background-color: var(--forest); box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
+#latlon:active { transform: translateX(-50%) scale(0.96); }
+
+/* Kill the blue tap-flash everywhere; default to non-selectable UI chrome */
+* { -webkit-tap-highlight-color: transparent; }
+button, .small-btn, .control, .control-button, .div-label, label,
+.custom-upload, .rail-nav, #menu-toggle, #theme-toggle, #latlon,
+.analysis-spot-card, .analysis-selectall, .job-row, .job-file-chip,
+.share-project-item, .field-toggle, .ref-toggle, .spot-detail-actions,
+.diff-project, nav, .sync-group-header, .modal-dialog h3, .popup-content h3 {
+    -webkit-user-select: none; -moz-user-select: none; user-select: none;
+}
+/* …but KEEP selectable the things a user may want to copy */
+input, textarea, code, pre,
+.entry-desc, .entry-coords, .spot-detail-coords,
+#share-link-display, #viewer-preview-area, .external-data-list,
+#spot-coordinates {
+    -webkit-user-select: text; -moz-user-select: text; user-select: text;
+}
+
+/* Item 3: dark-theme readability for the analysis help/info boxes
+   (these use hardcoded light backgrounds inline; override on dark) */
+[data-theme="dark"] #server-help {
+    background: #14323f !important; color: #cfe8f5 !important; border-color: #2c5a6c !important;
+}
+[data-theme="dark"] #server-help strong,
+[data-theme="dark"] #server-help-detail { color: #eaf4fb !important; }
+[data-theme="dark"] #watcher-offline-help {
+    background: #3a3320 !important; color: #f0e2b0 !important; border-color: #6b5d2e !important;
+}
+[data-theme="dark"] #watcher-offline-help code { color: #ffe9a8; }
