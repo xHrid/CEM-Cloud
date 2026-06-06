@@ -125,6 +125,12 @@ export function enumerateFileRefs(project) {
     for (const st of (project.sites || [])) {
         if (st.kml_filename) refs.push({ relPath: st.kml_filename, driveId: st.kml_drive_id || null, kind: 'kml' });
     }
+    for (const rt of (project.routes || [])) {
+        for (const a of (rt.annotations || [])) {
+            if (a.image_local_filename) refs.push({ relPath: a.image_local_filename, driveId: a.image_drive_id || null, kind: 'image' });
+            if (a.audio_local_filename) refs.push({ relPath: a.audio_local_filename, driveId: a.audio_drive_id || null, kind: 'audio' });
+        }
+    }
     for (const j of (project.jobs || [])) {
         if (j.job_file) refs.push({ relPath: j.job_file, driveId: j.job_file_drive_id || null, kind: 'job' });
         for (const rf of (j.result_files || [])) {

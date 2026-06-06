@@ -231,6 +231,85 @@ export async function saveRoute(routeData) {
     return newRoute;
 }
 
+/**
+ * Attach an annotation (description + optional image/audio) to a point on a
+ * recorded route. Routes are treated like spots: a route is a line of
+ * coordinates onto which observations can be pinned at specific points.
+ *
+ * The annotation's media is stored under the route's own folder and queued for
+ * Drive sync exactly like spot media, so routes are first-class shareable
+ * location objects.
+ *
+ * @param {string}    routeId    UUID of the route to annotate.
+ * @param {object}    data       { lat, lng, description }.
+ * @param {Blob|null} imageBlob  Optional photo for this point.
+ * @param {Blob|null} audioBlob  Optional voice note for this point.
+ * @returns {Promise<object>}    The saved annotation record.
+ */
+export async function saveRouteAnnotation(routeId, data, imageBlob, audioBlob) {
+    const project       = _requireActiveProject();
+    const projectFolder = getProjectFolderName(project);
+
+    const route = (project.routes || []).find(r => r.id === routeId);
+    if (!route) throw new Error(`Route "${routeId}" not found.`);
+
+    const annId    = crypto.randomUUID();
+    const safeRoute = _safeName(route.name, `Route_${routeId.substring(0, 8)}`);
+    const base      = [projectFolder, 'routes', safeRoute, 'annotations', annId.substring(0, 8)];
+
+    let imgPath = null;
+    let audioPath = null;
+
+    if (imageBlob) {
+        imgPath = await StorageAdapter.saveFile(imageBlob, `${annId.substring(0, 8)}_photo.jpg`, [...base, 'images']);
+    }
+    if (audioBlob) {
+        audioPath = await StorageAdapter.saveFile(audioBlob, `${annId.substring(0, 8)}_note.webm`, [...base, 'audio']);
+    }
+
+    const now = new Date().toISOString();
+    const annotation = {
+        id                   : annId,
+        latitude             : data.latitude  ?? data.lat,
+        longitude            : data.longitude ?? data.lng,
+        description          : data.description || '',
+        image_local_filename : imgPath,
+        audio_local_filename : audioPath,
+        timestamp            : now,
+    };
+
+    if (!route.annotations) route.annotations = [];
+    route.annotations.push(annotation);
+    // Bump the route timestamp so last-write-wins merges carry the new
+    // annotation across to collaborators (routes merge whole-record by id).
+    route.timestamp = now;
+
+    await MasterData.saveMasterData();
+    EventBus.emit(EVENTS.DATA_UPDATED);
+
+    if (imgPath)   EventBus.emit(EVENTS.MEDIA_SAVED, { projectId: project.id, relPath: imgPath,   isExternal: false });
+    if (audioPath) EventBus.emit(EVENTS.MEDIA_SAVED, { projectId: project.id, relPath: audioPath, isExternal: false });
+
+    return annotation;
+}
+
+/**
+ * Delete a single annotation from a route.
+ *
+ * @param {string} routeId  UUID of the route.
+ * @param {string} annId    UUID of the annotation to remove.
+ * @returns {Promise<void>}
+ */
+export async function deleteRouteAnnotation(routeId, annId) {
+    const project = _requireActiveProject();
+    const route   = (project.routes || []).find(r => r.id === routeId);
+    if (!route?.annotations) return;
+    route.annotations = route.annotations.filter(a => a.id !== annId);
+    route.timestamp = new Date().toISOString();
+    await MasterData.saveMasterData();
+    EventBus.emit(EVENTS.DATA_UPDATED);
+}
+
 // ---------------------------------------------------------------------------
 // External file
 // ---------------------------------------------------------------------------

@@ -424,6 +424,16 @@ function _recordDriveId(project, relPath, fileId) {
             site.kml_drive_id = fileId; site.timestamp = now; changed = true;
         }
     }
+    for (const route of (project.routes || [])) {
+        for (const a of (route.annotations || [])) {
+            if (a.image_local_filename === relPath && a.image_drive_id !== fileId) {
+                a.image_drive_id = fileId; a.timestamp = now; route.timestamp = now; changed = true;
+            }
+            if (a.audio_local_filename === relPath && a.audio_drive_id !== fileId) {
+                a.audio_drive_id = fileId; a.timestamp = now; route.timestamp = now; changed = true;
+            }
+        }
+    }
     for (const job of (project.jobs || [])) {
         if (job.job_file === relPath && job.job_file_drive_id !== fileId) {
             job.job_file_drive_id = fileId; job.timestamp = now; changed = true;

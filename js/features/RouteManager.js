@@ -1,181 +1,518 @@
 /**
- * RouteManager.js — GPS route tracking and persistence
+ * RouteManager.js — GPS route tracking, display, and point annotations
  *
  * Pattern : Module Pattern (private state + narrow exported API)
  *
- * Replaces the legacy js/route.js. Bugs fixed:
+ * Model
+ * -----
+ * A route is a transect walk: an ordered, de-duplicated array of {lat,lng}
+ * points. Routes are first-class LOCATION OBJECTS, treated like spots — you can
+ * pin observations (photo / audio / description) to any point along the line.
  *
- *  Bug 1 — window.map.on('locationfound', ...) was called at module top level
- *           (import time), before the map had been initialised by MapManager.
- *           Race condition: if this module was imported before initMap() ran,
- *           the call threw "Cannot read properties of null". Fixed: the
- *           locationfound listener is attached inside initRoutes(), which is
- *           called after initMap() in the App bootstrap.
+ *   route = {
+ *     id, projectId, name, timestamp,
+ *     points:      [{lat,lng}, ...],          // the walked line (stored efficiently)
+ *     annotations: [{ id, latitude, longitude, description,
+ *                     image_local_filename, audio_local_filename, timestamp }, ...]
+ *   }
  *
- *  Bug 2 — The save-route dialog was shown with display:"block" which left it
- *           left-aligned instead of centred. Fixed: display:"flex" matches the
- *           .modal CSS which uses flexbox centering (justify-content:center /
- *           align-items:center on a full-viewport overlay).
+ * Features
+ * --------
+ *  - Record a walk (live polyline) → save with a name.
+ *  - "Show" toggle renders every saved route + its annotation markers.
+ *  - Tap a point on a route → a highlighted circle marks the spot and a side
+ *    form opens to add photo/audio/description (with "Add another").
+ *  - Tap an annotation marker → view its media, add more, or delete.
  *
- *  Bug 3 — No validation for empty route name or fewer than 2 recorded points.
- *           A zero-point route produced a corrupt GeoJSON record.
- *           Fixed: validate before saving and show a toast on failure.
- *
- *  Bug 4 — alert("Route Saved to Drive!") was factually wrong — the route is
- *           saved locally via Repository.saveRoute() (Drive push is fire-and-
- *           forget). Fixed: showToast("Route saved locally", "success").
- *
- * Import graph
- * ------------
- *   EventBus, EVENTS  → ../core/EventBus.js
- *   saveRoute         → ../data/Repository.js
- *   getMap            → ./MapManager.js
- *   showToast         → ../ui/Toast.js
+ * Bug history (kept): see git log. Routes previously recorded but never
+ * displayed because no render path existed; annotations were not supported.
  */
 
-import EventBus, { EVENTS } from '../core/EventBus.js';
-import { saveRoute }        from '../data/Repository.js';
-import { getMap }           from './MapManager.js';
-import { showToast }        from '../ui/Toast.js';
+import EventBus, { EVENTS }     from '../core/EventBus.js';
+import {
+    saveRoute,
+    saveRouteAnnotation,
+    deleteRouteAnnotation,
+    getLocalFileUrl,
+}                                from '../data/Repository.js';
+import { getRoutes, getActiveProjectId } from '../data/MasterData.js';
+import { getMap }               from './MapManager.js';
+import { showToast }            from '../ui/Toast.js';
 import { openModal, closeModal } from '../ui/ModalManager.js';
+import { downscaleImage }       from '../data/imageUtils.js';
 
 // ---------------------------------------------------------------------------
-// Module-private state
+// Module-private state — recording
 // ---------------------------------------------------------------------------
 
-/** Recorded GPS waypoints for the current tracking session.
- *  @type {Array<{lat: number, lng: number}>} */
+/** @type {Array<{lat:number,lng:number}>} live waypoints for the current session */
 let _routePoints = [];
-
-/** @type {L.Polyline|null} — live polyline drawn on the map during tracking */
+/** @type {L.Polyline|null} live polyline drawn while recording */
 let _routePolyline = null;
-
-/** @type {boolean} — whether GPS tracking is currently active */
+/** @type {boolean} */
 let _isTracking = false;
 
 // ---------------------------------------------------------------------------
-// Private helpers
+// Module-private state — display + annotation
 // ---------------------------------------------------------------------------
 
-/**
- * Handler for Leaflet's locationfound event.
- *
- * Appends the new coordinate to _routePoints and extends the polyline.
- * Only acts when _isTracking is true so the listener can remain attached
- * permanently without accumulating points between sessions.
- *
- * @param {L.LocationEvent} e
- */
+/** @type {L.LayerGroup|null} holds all saved-route polylines + annotation markers */
+let _routesLayer = null;
+/** @type {L.CircleMarker|null} the temporary "you are adding here" highlight */
+let _draftMarker = null;
+/** Route + coords currently targeted by the annotation form. */
+let _annotationTarget = null; // { routeId, lat, lng }
+
+/** Last active project id — distinguishes a real switch from a sync refresh. */
+let _lastProjectId = null;
+
+// Annotation audio recording state (self-contained — independent of SpotManager)
+let _mediaRecorder = null;
+let _audioChunks = [];
+let _recordedAudioBlob = null;
+
+const HIGHLIGHT_COLOR = '#e91e63';   // draft point being added
+const ANNOTATION_COLOR = '#ff5722';  // saved annotation markers
+const ROUTE_COLOR = '#1565c0';       // saved route line
+
+// ---------------------------------------------------------------------------
+// Recording
+// ---------------------------------------------------------------------------
+
 function _onLocationFound(e) {
     if (!_isTracking) return;
     _routePoints.push({ lat: e.latitude, lng: e.longitude });
     if (_routePolyline) _routePolyline.addLatLng(e.latlng);
 }
 
-/**
- * Show the save-route dialog.
- *
- * Bug 2 fix: uses display:"flex" so the .modal CSS overlay centres the dialog
- * via justify-content:center + align-items:center, matching all other dialogs
- * in the app that use the same pattern.
- */
-function _showSaveDialog() {
-    openModal('save-route-dialog');
-}
-
-/**
- * Hide the save-route dialog.
- */
-function _hideSaveDialog() {
-    closeModal('save-route-dialog');
-}
-
-// ---------------------------------------------------------------------------
-// Private — tracking toggle
-// ---------------------------------------------------------------------------
-
-/**
- * Toggle GPS tracking on or off.
- *
- * When starting: clears previous points, creates a fresh polyline on the map.
- * When stopping:  shows the save dialog so the user can name the route.
- *
- * @param {HTMLButtonElement} btn — the #toggle-tracking button element
- */
 function _handleTrackingToggle(btn) {
     _isTracking = !_isTracking;
 
     if (_isTracking) {
-        // --- Start a new recording session ---
         _routePoints = [];
-        const map = getMap();   // Bug 1 fix: getMap() called here, not at import time
+        const map = getMap();
         if (_routePolyline) map.removeLayer(_routePolyline);
         _routePolyline = L.polyline([], { color: 'blue' }).addTo(map);
 
-        btn.textContent  = 'Stop & Save';
-        btn.style.background = 'red';
+        btn.textContent      = 'Stop & Save';
+        btn.style.background  = 'red';
     } else {
-        // --- Stop and prompt the user to save ---
         btn.textContent      = 'Record';
-        btn.style.background = '';
-        _showSaveDialog();
+        btn.style.background  = '';
+        openModal('save-route-dialog');
     }
 }
 
-// ---------------------------------------------------------------------------
-// Private — route form submission
-// ---------------------------------------------------------------------------
-
-/**
- * Handle the #route-form submit event.
- *
- * Bug 3 fix: validates that a non-empty name was entered and that at least
- *            2 GPS points were recorded before calling saveRoute().
- *
- * Bug 4 fix: shows "Route saved locally" toast instead of the factually
- *            incorrect "Saved to Drive!" alert.
- *
- * @param {SubmitEvent} e
- */
 async function _handleRouteFormSubmit(e) {
     e.preventDefault();
 
     const name = document.getElementById('route-name')?.value?.trim();
-
-    // Bug 3 fix: validate name
     if (!name) {
         showToast('Please enter a name for the route.', 'failed');
         return;
     }
-
-    // Bug 3 fix: validate minimum points
     if (_routePoints.length < 2) {
         showToast('At least 2 GPS points are needed to save a route.', 'failed');
         return;
     }
 
     try {
-        await saveRoute({ name, points: _routePoints });
-
-        // Bug 4 fix: honest, local-save confirmation
+        await saveRoute({ name, points: _dedupePoints(_routePoints) });
         showToast('Route saved locally.', 'success');
 
-        _hideSaveDialog();
+        closeModal('save-route-dialog');
         _routePoints = [];
 
-        // Clear the in-progress polyline from the map
         if (_routePolyline) {
             getMap().removeLayer(_routePolyline);
             _routePolyline = null;
         }
 
-        // Reset the name field for the next session
         const routeNameInput = document.getElementById('route-name');
         if (routeNameInput) routeNameInput.value = '';
 
+        // Show the freshly saved route immediately if the toggle is on.
+        if (_isRoutesCheckboxChecked()) displayRoutes();
     } catch (err) {
         console.error('[RouteManager] saveRoute failed:', err);
         showToast(`Error saving route: ${err.message}`, 'failed');
+    }
+}
+
+/**
+ * Drop redundant points: skip consecutive samples closer than ~3 m so the
+ * stored line stays compact (a route is "an arrow of lat/lons stored
+ * efficiently — no redundant info, not very close points").
+ *
+ * @param {Array<{lat:number,lng:number}>} pts
+ * @returns {Array<{lat:number,lng:number}>}
+ */
+function _dedupePoints(pts) {
+    if (pts.length < 2) return pts;
+    const MIN_M = 3;
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+        const a = out[out.length - 1];
+        const b = pts[i];
+        if (_haversine(a.lat, a.lng, b.lat, b.lng) >= MIN_M) out.push(b);
+    }
+    // Always keep the final point so the line ends where the walk ended.
+    const last = pts[pts.length - 1];
+    if (out[out.length - 1] !== last) out.push(last);
+    return out;
+}
+
+/** Great-circle distance in metres. */
+function _haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// ---------------------------------------------------------------------------
+// Display
+// ---------------------------------------------------------------------------
+
+/** Read the show-routes toggle state. */
+function _isRoutesCheckboxChecked() {
+    const cb = document.getElementById('show-routes-toggle');
+    return cb ? cb.checked : false;
+}
+
+/**
+ * Render every saved route for the active project as a polyline, plus a marker
+ * for each annotation. Rebuilds the layer from scratch on every call.
+ */
+export function displayRoutes() {
+    const map = getMap();
+    if (_routesLayer) map.removeLayer(_routesLayer);
+    _routesLayer = L.layerGroup().addTo(map);
+
+    const routes = getRoutes();
+    if (!routes || routes.length === 0) return;
+
+    for (const route of routes) {
+        const latlngs = (route.points || [])
+            .filter(p => p && p.lat != null && p.lng != null)
+            .map(p => [p.lat, p.lng]);
+        if (latlngs.length < 2) continue;
+
+        const line = L.polyline(latlngs, {
+            color: ROUTE_COLOR,
+            weight: 4,
+            opacity: 0.85,
+        }).addTo(_routesLayer);
+
+        line.bindTooltip(route.name || 'Route', { sticky: true });
+
+        // Tap the line → start adding an annotation at the tapped point.
+        line.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            _beginAnnotation(route.id, e.latlng.lat, e.latlng.lng);
+        });
+
+        // Render existing annotation markers.
+        for (const a of (route.annotations || [])) {
+            if (a.latitude == null || a.longitude == null) continue;
+            const marker = L.circleMarker([a.latitude, a.longitude], {
+                color: '#000',
+                fillColor: ANNOTATION_COLOR,
+                fillOpacity: 0.9,
+                radius: 7,
+                weight: 1,
+            }).addTo(_routesLayer);
+            marker.bindTooltip(a.description ? a.description.slice(0, 40) : 'Observation', { direction: 'top' });
+            marker.on('click', (e) => {
+                L.DomEvent.stopPropagation(e);
+                _showAnnotationDetails(route, a);
+            });
+        }
+    }
+}
+
+/** Remove the routes layer from the map entirely. */
+export function clearRoutesLayer() {
+    if (_routesLayer) {
+        getMap().removeLayer(_routesLayer);
+        _routesLayer = null;
+    }
+    _clearDraftMarker();
+}
+
+function _clearDraftMarker() {
+    if (_draftMarker) {
+        getMap().removeLayer(_draftMarker);
+        _draftMarker = null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Annotation — side panel form
+// ---------------------------------------------------------------------------
+
+/**
+ * Begin annotating a point: drop a highlighted circle at the tapped location
+ * and open the side form. Mirrors the spot "add" experience.
+ */
+function _beginAnnotation(routeId, lat, lng) {
+    _annotationTarget = { routeId, lat, lng };
+
+    _clearDraftMarker();
+    _draftMarker = L.circleMarker([lat, lng], {
+        color: '#fff',
+        fillColor: HIGHLIGHT_COLOR,
+        fillOpacity: 1,
+        radius: 9,
+        weight: 3,
+    }).addTo(getMap());
+
+    _resetAnnotationAudio();
+    _renderAnnotationForm(lat, lng);
+    _openRoutePanel();
+}
+
+/** Build the form markup inside the route side panel. */
+function _renderAnnotationForm(lat, lng) {
+    const content = document.getElementById('route-panel-content');
+    if (!content) return;
+
+    content.innerHTML = `
+        <h2 style="margin-top:0;">Add to route</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted);">
+            Point: (${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)})
+        </p>
+        <form id="route-annotation-form">
+            <textarea id="route-ann-desc" placeholder="Description / notes"
+                style="width:100%; min-height:70px; box-sizing:border-box; margin-bottom:8px;"></textarea>
+
+            <div class="media-controls" style="display:flex; gap:10px; align-items:center; margin-bottom:8px;">
+                <label for="route-ann-image" class="custom-upload" style="cursor:pointer;"><span>📷</span></label>
+                <input type="file" id="route-ann-image" accept="image/*" capture="environment" style="display:none;" />
+                <label id="route-ann-audio-toggle" class="custom-upload" style="cursor:pointer;"><span>🎤</span></label>
+                <audio id="route-ann-playback" controls style="height:32px;"></audio>
+            </div>
+            <div id="route-ann-image-name" style="font-size:0.8rem; color:var(--text-muted); margin-bottom:8px;"></div>
+
+            <div class="button-group" style="display:flex; gap:8px;">
+                <button type="submit" class="popup-btn">Save</button>
+                <button type="button" id="route-ann-cancel" class="popup-btn cancel-btn">Cancel</button>
+            </div>
+        </form>
+    `;
+
+    document.getElementById('route-annotation-form')
+        ?.addEventListener('submit', _handleAnnotationSubmit);
+    document.getElementById('route-ann-cancel')
+        ?.addEventListener('click', () => { _closeRoutePanel(); _clearDraftMarker(); });
+    document.getElementById('route-ann-image')
+        ?.addEventListener('change', (e) => {
+            const f = e.target.files[0];
+            const el = document.getElementById('route-ann-image-name');
+            if (el) el.textContent = f ? `Photo: ${f.name}` : '';
+        });
+    _bindAnnotationAudioToggle();
+}
+
+async function _handleAnnotationSubmit(e) {
+    e.preventDefault();
+    if (!_annotationTarget) return;
+
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving...'; }
+
+    try {
+        let imageFile = document.getElementById('route-ann-image')?.files[0] || null;
+        if (imageFile) imageFile = await downscaleImage(imageFile);
+
+        const desc = document.getElementById('route-ann-desc')?.value || '';
+
+        await saveRouteAnnotation(
+            _annotationTarget.routeId,
+            { latitude: _annotationTarget.lat, longitude: _annotationTarget.lng, description: desc },
+            imageFile,
+            _recordedAudioBlob
+        );
+
+        showToast('Added to route.', 'success');
+        _resetAnnotationAudio();
+        _clearDraftMarker();
+        _closeRoutePanel();
+
+        if (_isRoutesCheckboxChecked()) displayRoutes();
+    } catch (err) {
+        console.error('[RouteManager] saveRouteAnnotation failed:', err);
+        showToast(`Could not save: ${err.message}`, 'failed');
+    } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Save'; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Annotation — details view
+// ---------------------------------------------------------------------------
+
+async function _showAnnotationDetails(route, ann) {
+    const content = document.getElementById('route-panel-content');
+    if (!content) return;
+
+    content.innerHTML = `
+        <h2 style="margin-top:0;">Route observation</h2>
+        <p style="font-size:0.85rem; color:var(--text-muted);">
+            ${route.name || 'Route'} — (${Number(ann.latitude).toFixed(5)}, ${Number(ann.longitude).toFixed(5)})<br>
+            <small>${new Date(ann.timestamp || Date.now()).toLocaleString()}</small>
+        </p>
+        <p><strong>Description:</strong> <span id="route-ann-desc-view"></span></p>
+        <div id="route-ann-img" style="margin:10px 0;"></div>
+        <div id="route-ann-aud" style="margin:10px 0;"></div>
+        <div class="button-group" style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" id="route-ann-addmore" class="popup-btn" style="background:#4CAF50; color:#fff;">+ Add here</button>
+            <button type="button" id="route-ann-delete" class="popup-btn" style="background:#dc3545; color:#fff;">Delete</button>
+            <button type="button" id="route-ann-close" class="popup-btn cancel-btn">Close</button>
+        </div>
+    `;
+    content.querySelector('#route-ann-desc-view').textContent = ann.description || 'No notes';
+
+    // Image (local first, public Drive fallback for collaborators).
+    const imgBox = content.querySelector('#route-ann-img');
+    if (ann.image_local_filename || ann.image_drive_id) {
+        const url = ann.image_local_filename ? await getLocalFileUrl(ann.image_local_filename) : null;
+        if (url) {
+            imgBox.innerHTML = `<img src="${url}" style="max-width:100%; border-radius:8px;">`;
+        } else if (ann.image_drive_id) {
+            imgBox.innerHTML = `<img src="https://drive.google.com/thumbnail?id=${ann.image_drive_id}&sz=w1600" referrerpolicy="no-referrer" style="max-width:100%; border-radius:8px;">`;
+        }
+    }
+
+    // Audio.
+    const audBox = content.querySelector('#route-ann-aud');
+    if (ann.audio_local_filename || ann.audio_drive_id) {
+        const url = ann.audio_local_filename ? await getLocalFileUrl(ann.audio_local_filename) : null;
+        if (url) {
+            audBox.innerHTML = `<audio controls src="${url}" style="width:100%;"></audio>`;
+        } else if (ann.audio_drive_id) {
+            const dl = `https://drive.usercontent.google.com/download?id=${ann.audio_drive_id}&export=download`;
+            audBox.innerHTML = `<audio controls style="width:100%;"><source src="${dl}"></audio>`;
+        }
+    }
+
+    content.querySelector('#route-ann-close')?.addEventListener('click', _closeRoutePanel);
+    content.querySelector('#route-ann-addmore')?.addEventListener('click', () => {
+        // Add another observation at the same point — same flow as spots' "Add More".
+        _beginAnnotation(route.id, ann.latitude, ann.longitude);
+    });
+    content.querySelector('#route-ann-delete')?.addEventListener('click', async () => {
+        if (!confirm('Delete this observation? This cannot be undone.')) return;
+        try {
+            await deleteRouteAnnotation(route.id, ann.id);
+            showToast('Observation deleted.', 'success');
+            _closeRoutePanel();
+            if (_isRoutesCheckboxChecked()) displayRoutes();
+        } catch (err) {
+            showToast(`Delete failed: ${err.message}`, 'failed');
+        }
+    });
+
+    _openRoutePanel();
+}
+
+// ---------------------------------------------------------------------------
+// Annotation — audio capture (independent of SpotManager)
+// ---------------------------------------------------------------------------
+
+function _bindAnnotationAudioToggle() {
+    const toggle = document.getElementById('route-ann-audio-toggle');
+    if (!toggle) return;
+    toggle.addEventListener('click', async () => {
+        const idle = !_mediaRecorder || _mediaRecorder.state === 'inactive';
+        if (idle) {
+            await _startAnnotationRecording();
+            if (_mediaRecorder) toggle.style.backgroundColor = 'red';
+        } else {
+            if (_mediaRecorder.state !== 'inactive') _mediaRecorder.stop();
+            toggle.style.backgroundColor = '';
+        }
+    });
+}
+
+async function _startAnnotationRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        _audioChunks = [];
+        _recordedAudioBlob = null;
+        _mediaRecorder = new MediaRecorder(stream);
+        _mediaRecorder.ondataavailable = (e) => _audioChunks.push(e.data);
+        _mediaRecorder.onstop = () => {
+            _recordedAudioBlob = new Blob(_audioChunks, { type: 'audio/webm' });
+            const pb = document.getElementById('route-ann-playback');
+            if (pb) pb.src = URL.createObjectURL(_recordedAudioBlob);
+        };
+        _mediaRecorder.start();
+    } catch (err) {
+        showToast(`Mic error: ${err.message}`, 'failed');
+        _mediaRecorder = null;
+    }
+}
+
+function _resetAnnotationAudio() {
+    _recordedAudioBlob = null;
+    _mediaRecorder = null;
+    _audioChunks = [];
+}
+
+// ---------------------------------------------------------------------------
+// Side panel show/hide + injection
+// ---------------------------------------------------------------------------
+
+function _openRoutePanel() {
+    document.getElementById('route-side-panel')?.classList.add('open');
+    document.body.classList.add('panel-open');
+}
+function _closeRoutePanel() {
+    document.getElementById('route-side-panel')?.classList.remove('open');
+    document.body.classList.remove('panel-open');
+}
+
+/**
+ * Inject the route side panel once. Reuses the same slide-in styling contract
+ * as the spot-details panel (#spot-details-menu) so it matches the app.
+ */
+function _ensureSidePanel() {
+    if (document.getElementById('route-side-panel')) return;
+    const aside = document.createElement('aside');
+    aside.id = 'route-side-panel';
+    aside.setAttribute('aria-label', 'Route observation');
+    aside.innerHTML = `
+        <button id="route-panel-close" aria-label="Close">x</button>
+        <div id="route-panel-content"></div>
+    `;
+    document.body.appendChild(aside);
+    document.getElementById('route-panel-close')
+        ?.addEventListener('click', () => { _closeRoutePanel(); _clearDraftMarker(); });
+
+    // Minimal styling injected once — mirrors #spot-details-menu behaviour but
+    // is self-contained so it works even if the stylesheet lacks a rule for it.
+    if (!document.getElementById('route-panel-style')) {
+        const style = document.createElement('style');
+        style.id = 'route-panel-style';
+        style.textContent = `
+            #route-side-panel {
+                position: fixed; top: 0; right: 0; height: 100%; width: 320px;
+                max-width: 85vw; background: var(--bg-surface, #fff);
+                color: var(--text-dark, #222); box-shadow: -2px 0 12px rgba(0,0,0,0.25);
+                transform: translateX(105%); transition: transform 0.3s ease;
+                z-index: 1200; padding: 18px; box-sizing: border-box; overflow-y: auto;
+            }
+            #route-side-panel.open { transform: translateX(0); }
+            #route-panel-close {
+                position: absolute; top: 10px; right: 12px; border: none;
+                background: none; font-size: 1.3rem; cursor: pointer; color: inherit;
+            }
+        `;
+        document.head.appendChild(style);
     }
 }
 
@@ -183,40 +520,53 @@ async function _handleRouteFormSubmit(e) {
 // Public — module initialisation
 // ---------------------------------------------------------------------------
 
-/**
- * Wire all DOM event listeners for the Routes feature.
- *
- * Must be called exactly once from App.js after both DOMContentLoaded AND
- * initMap() have completed. This ordering guarantees getMap() succeeds when
- * the locationfound listener is attached to the Leaflet map instance.
- *
- * Sequence in App.js bootstrap:
- *   initMap();       // MapManager — creates L.Map
- *   initRoutes();    // RouteManager — attaches to the now-live map
- */
 export function initRoutes() {
-    const map = getMap(); // Bug 1 fix: deferred until initRoutes() call time
-
-    // Attach the location listener to the live map instance (Bug 1 fix)
+    const map = getMap();
     map.on('locationfound', _onLocationFound);
 
-    // --- Record / Stop & Save toggle button ---
+    _ensureSidePanel();
+
     const toggleBtn = document.getElementById('toggle-tracking');
     if (toggleBtn) {
         toggleBtn.addEventListener('click', () => _handleTrackingToggle(toggleBtn));
     }
 
-    // --- Route name form submission ---
     const routeForm = document.getElementById('route-form');
-    if (routeForm) {
-        routeForm.addEventListener('submit', _handleRouteFormSubmit);
+    if (routeForm) routeForm.addEventListener('submit', _handleRouteFormSubmit);
+
+    const closeBtn = document.querySelector('#save-route-dialog .close, #save-route-dialog .cancel-btn');
+    if (closeBtn) closeBtn.addEventListener('click', () => closeModal('save-route-dialog'));
+
+    // --- Show Routes toggle ---
+    const showCb = document.getElementById('show-routes-toggle');
+    if (showCb) {
+        showCb.addEventListener('change', (e) => {
+            if (e.target.checked) displayRoutes();
+            else clearRoutesLayer();
+        });
     }
 
-    // --- Dialog close (X) button ---
-    const closeBtn = document.querySelector('#save-route-dialog .close');
-    if (closeBtn) {
-        closeBtn.addEventListener('click', _hideSaveDialog);
-    }
+    // --- EventBus: keep the layer fresh, only when the toggle is on ---
+    EventBus.on(EVENTS.PROJECT_CHANGED, () => {
+        const pid = getActiveProjectId();
+        const switched = pid !== _lastProjectId;
+        _lastProjectId = pid;
+
+        // A background sync also fires PROJECT_CHANGED — don't tear down the
+        // annotation panel the user is filling in unless the project truly changed.
+        if (switched) {
+            _closeRoutePanel();
+            _clearDraftMarker();
+        }
+        if (_isRoutesCheckboxChecked()) displayRoutes();
+        else clearRoutesLayer();
+    });
+    EventBus.on(EVENTS.DATA_UPDATED, () => {
+        if (_isRoutesCheckboxChecked()) displayRoutes();
+    });
+    EventBus.on(EVENTS.STORAGE_READY, () => {
+        if (_isRoutesCheckboxChecked()) displayRoutes();
+    });
 
     console.log('[RouteManager] Initialised.');
 }

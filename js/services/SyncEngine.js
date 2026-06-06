@@ -49,7 +49,7 @@ const PUSH_DEBOUNCE_MS = 4000;
 const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Pseudo-realtime pull cadence for the active SHARED project. */
-const POLL_MS = 30 * 1000; // 30 seconds
+const POLL_MS = 2 * 60 * 1000; // 2 minutes (was 30s — too aggressive)
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -58,6 +58,7 @@ const POLL_MS = 30 * 1000; // 30 seconds
 let _started   = false;
 let _dirty     = false;          // unpushed JSON changes exist
 let _status    = 'idle';         // 'idle' | 'syncing' | 'offline' | 'error'
+let _lastSyncAt = null;          // epoch ms of the last successful sync
 let _debounce  = null;
 let _interval  = null;
 let _poll      = null;
@@ -75,7 +76,13 @@ let _sharedSyncBusy   = false;
  * @returns {{ status: string, dirty: boolean }}
  */
 export function getSyncState() {
-    return { status: _status, dirty: _dirty };
+    return { status: _status, dirty: _dirty, lastSyncAt: _lastSyncAt };
+}
+
+/** Stamp a successful sync and re-emit status so the UI can refresh "X ago". */
+function _markSynced() {
+    _lastSyncAt = Date.now();
+    _emitStatus();
 }
 
 function _setStatus(s) {
@@ -88,6 +95,7 @@ function _emitStatus() {
     EventBus.emit(EVENTS.SYNC_STATUS, {
         status: _status,
         dirty: _dirty,
+        lastSyncAt: _lastSyncAt,
     });
 }
 
@@ -131,6 +139,7 @@ export async function flush(reason = 'manual') {
             await pushToSharedProject(active.id);
         }
 
+        _markSynced();
         _setStatus('idle');
     } catch (err) {
         console.error('[SyncEngine] flush failed:', err);
@@ -149,6 +158,7 @@ export function onAuthReady() {
     checkForRemoteUpdates(false).catch(err =>
         console.warn('[SyncEngine] initial conflict check failed:', err.message)
     );
+    _markSynced();
     _setStatus('idle');
 }
 
@@ -189,6 +199,7 @@ async function _syncActiveSharedProject(force = false) {
         } else if (isOwnerShared) {
             await SharingService.pullEditorContributions(active.id);
         }
+        _markSynced();
         console.log('[SyncEngine] Shared-project sync complete for', active.name);
     } catch (err) {
         console.warn('[SyncEngine] Shared-project sync failed:', err.message);

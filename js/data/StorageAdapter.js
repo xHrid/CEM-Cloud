@@ -89,10 +89,57 @@ async function _idbSave(key, blob) {
     const db = await _openDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(DB_STORE, 'readwrite');
-        tx.objectStore(DB_STORE).put(blob, key);
+        const req = tx.objectStore(DB_STORE).put(blob, key);
+
+        // Surface quota errors with an actionable message instead of the raw,
+        // cryptic DOMException. Both the request and the transaction can carry
+        // the QuotaExceededError depending on the browser, so handle both.
+        const fail = (err) => reject(_mapStorageError(err));
+        req.onerror = () => fail(req.error);
+        tx.onabort  = () => fail(tx.error);
+        tx.onerror  = () => fail(tx.error);
         tx.oncomplete = () => resolve();
-        tx.onerror   = () => reject(tx.error);
     });
+}
+
+/**
+ * Translate a raw IndexedDB error into a clearer, user-facing Error.
+ * A QuotaExceededError on mobile means the browser's per-site storage budget
+ * is full (or the app wasn't granted persistent storage).
+ *
+ * @param {DOMException|Error|null} err
+ * @returns {Error}
+ */
+function _mapStorageError(err) {
+    const name = err?.name || '';
+    if (name === 'QuotaExceededError' || /quota/i.test(err?.message || '')) {
+        return new Error(
+            'Device storage is full. Free up space (or remove old projects/media), ' +
+            'then try again. On mobile, keeping this site in the browser also helps.'
+        );
+    }
+    return err instanceof Error ? err : new Error(String(err || 'Storage write failed'));
+}
+
+/**
+ * Ask the browser to make storage persistent (not evictable) and, where
+ * supported, this also unlocks a larger quota on mobile. Best-effort and
+ * silent — never blocks initialisation.
+ *
+ * @returns {Promise<void>}
+ */
+async function _requestPersistentStorage() {
+    try {
+        if (navigator.storage?.persist && navigator.storage?.persisted) {
+            const already = await navigator.storage.persisted();
+            if (!already) {
+                const granted = await navigator.storage.persist();
+                console.log(`[StorageAdapter] Persistent storage ${granted ? 'granted' : 'denied'}.`);
+            }
+        }
+    } catch (e) {
+        console.warn('[StorageAdapter] persist() request failed:', e.message);
+    }
 }
 
 /** Retrieve a value from IndexedDB by key. Returns undefined if absent. */
@@ -149,6 +196,9 @@ const _blobUrls  = [];
  * @throws  {DOMException} AbortError if the user cancels the native picker.
  */
 export async function initStorage() {
+    // Best-effort: lock storage as persistent (and raise the mobile quota).
+    await _requestPersistentStorage();
+
     if (HAS_NATIVE_FS) {
         try {
             _rootHandle  = await window.showDirectoryPicker();
@@ -176,6 +226,32 @@ export async function initStorage() {
  */
 export function isInitialized() {
     return _initialized;
+}
+
+/**
+ * Report how much of the browser's storage budget is in use.
+ *
+ * Backed by the Storage API (navigator.storage.estimate). The quota is the
+ * browser's per-origin budget — on Chromium/Firefox this is typically a large
+ * fraction of free disk (gigabytes); on iOS Safari it is smaller. Returns null
+ * fields when the API is unavailable (e.g. older Safari).
+ *
+ * @returns {Promise<{usage:number|null, quota:number|null, percent:number|null, persisted:boolean}>}
+ */
+export async function getStorageEstimate() {
+    const out = { usage: null, quota: null, percent: null, persisted: false };
+    try {
+        if (navigator.storage?.persisted) out.persisted = await navigator.storage.persisted();
+        if (navigator.storage?.estimate) {
+            const { usage, quota } = await navigator.storage.estimate();
+            out.usage = usage ?? null;
+            out.quota = quota ?? null;
+            if (usage != null && quota) out.percent = Math.round((usage / quota) * 100);
+        }
+    } catch (e) {
+        console.warn('[StorageAdapter] estimate failed:', e.message);
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------

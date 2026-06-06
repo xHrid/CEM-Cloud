@@ -53,6 +53,12 @@ function _remapMediaPaths(project, ownerFolderName, localFolderName) {
     for (const site of (project.sites || [])) {
         site.kml_filename = remap(site.kml_filename);
     }
+    for (const route of (project.routes || [])) {
+        for (const a of (route.annotations || [])) {
+            a.image_local_filename = remap(a.image_local_filename);
+            a.audio_local_filename = remap(a.audio_local_filename);
+        }
+    }
     for (const file of (project.external_files || [])) {
         file.local_path = remap(file.local_path);
     }
@@ -189,6 +195,61 @@ export async function shareProject(projectId, emails, role) {
     const project = state.projects.find(p => p.id === projectId);
     if (!project) throw new Error(`Project "${projectId}" not found.`);
 
+    // -----------------------------------------------------------------------
+    // Re-share path: this is a project shared TO us that we edit.
+    // We grant additional Drive permissions on the SAME shared folder, so the
+    // original owner is unchanged (A stays owner; B and C become editors). We
+    // never create a copy in our own Drive.
+    // -----------------------------------------------------------------------
+    if (project.shared?.isImported) {
+        if (project.shared.permission !== 'writer') {
+            throw new Error('You have viewer access only — you cannot share this project.');
+        }
+
+        // CRITICAL: under the drive.file scope our token can only touch files
+        // this app created or the user opened via the Picker. When we imported,
+        // that was the project_data.json FILE — NOT its parent folder. Calling
+        // permissions on the folder ID 404s ("File not found"). So we grant
+        // access on the project_data.json file itself, which we CAN reach. The
+        // recipient imports it by file ID exactly like we did; media travels
+        // inline inside that file, so they get everything. The owner is
+        // unchanged — we're only adding a permission to the owner's file.
+        const shareId = project.shared.projectDataFileId || project.shared.sourceFolderId;
+        if (!shareId) {
+            throw new Error('Missing shared-file reference — re-import the project, then share.');
+        }
+
+        // Best-effort: push our pending edits first so recipients open current data.
+        try { await pushToSharedProject(project.id); }
+        catch (e) { console.warn('[SharingService] pre-share push failed:', e.message); }
+
+        const results = [];
+        for (const email of emails) {
+            try {
+                const perm = await DriveService.shareWithUser(shareId, email.trim(), role);
+                results.push({ email: email.trim(), success: true, permissionId: perm.id });
+            } catch (err) {
+                console.error(`[SharingService] Failed to re-share with ${email}:`, err);
+                results.push({ email: email.trim(), success: false, error: err.message });
+            }
+        }
+
+        // Record who we re-shared with (display only; ownership stays with owner).
+        project.shared.resharedWith = project.shared.resharedWith || [];
+        const known = new Set(project.shared.resharedWith.map(s => s.email));
+        for (const r of results) {
+            if (r.success && !known.has(r.email)) {
+                project.shared.resharedWith.push({ email: r.email, role, sharedAt: new Date().toISOString() });
+            }
+        }
+        await MasterData.saveMasterData();
+
+        // Recipient imports by file ID (the "project_data.json file ID" field in
+        // the Import dialog), so hand back that ID as the share reference.
+        EventBus.emit(EVENTS.PROJECT_SHARED, { projectId, emails, role, folderId: shareId });
+        return { folderId: shareId, shareLink: shareId, results };
+    }
+
     // Ensure project folder exists on Drive
     const rootFolderId  = await DriveService.findOrCreateRootFolder();
     const projectFolder = getProjectFolderName(project);
@@ -208,11 +269,16 @@ export async function shareProject(projectId, emails, role) {
     project.sharing.driveFolderId = folderId;
 
     // Push media FIRST — this publishes each file and stamps its public Drive
-    // ID onto the spot/site records...
-    await _pushAllProjectMedia(project, rootFolderId);
-
-    // ...then push project_data.json so it carries those Drive IDs for editors.
-    await pushProjectDataToDrive(project);
+    // ID onto the spot/site records. Non-fatal: a media/data push hiccup must
+    // not block granting access (this is what blocked re-sharing an already-
+    // shared project before).
+    try {
+        await _pushAllProjectMedia(project, rootFolderId);
+        // ...then push project_data.json so it carries those Drive IDs for editors.
+        await pushProjectDataToDrive(project);
+    } catch (e) {
+        console.warn('[SharingService] pre-share media/data push failed (continuing):', e.message);
+    }
 
     // Share with each email
     const results = [];

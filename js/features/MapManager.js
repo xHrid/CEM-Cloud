@@ -69,40 +69,22 @@ let _geoErrorNotified = false;
  * @param {L.Map} map
  */
 function _attachLocationHandlers(map) {
-    map.on('locationfound', (e) => {
-        _currLat = e.latitude;
-        _currLng = e.longitude;
-
-        // Update the sidebar coordinate label
-        const label = document.querySelector('#latlon label');
-        if (label) {
-            label.textContent = `Lat: ${e.latitude.toFixed(5)}, Lng: ${e.longitude.toFixed(5)}`;
-        }
-
-        // Create or reposition the "you are here" marker
-        if (!_locationMarker) {
-            _locationMarker = L.circleMarker(e.latlng, {
-                radius      : 8,
-                color       : '#ffffff',
-                fillColor   : '#2196F3',
-                fillOpacity : 1,
-                weight      : 2,
-            }).addTo(map).bindPopup('You are here');
-        } else {
-            _locationMarker.setLatLng(e.latlng);
-        }
-    });
+    map.on('locationfound', (e) => _applyPosition(e.latitude, e.longitude));
 
     // Bug fix: legacy code only called console.warn — the user had no idea
     // location was unavailable and would see stale (0, 0) coordinates silently.
     map.on('locationerror', (e) => {
         console.warn('[MapManager] Geolocation error:', e.message);
 
+        // Ignore TIMEOUT (code 3): a slow sample is not a real failure — the
+        // watch keeps trying and will fire locationfound once a fix lands.
+        if (e.code === 3) return;
+
         // watch:true keeps re-firing this on machines with no GPS dongle /
         // no location permission. Show the toast only ONCE so the user is
         // informed without being spammed. The app stays fully functional —
-        // getCurrentPosition() simply returns the last known (or 0,0) value
-        // and the spot form lets the user enter coordinates manually.
+        // getCurrentPosition() returns the last known (or 0,0) value and the
+        // spot form lets the user enter coordinates manually.
         if (_geoErrorNotified) return;
         _geoErrorNotified = true;
 
@@ -224,19 +206,57 @@ export function initMap() {
     _attachLocationHandlers(_map);
     _attachLongPressCopy(_map);
 
-    // Start continuous location watching.
-    //  - enableHighAccuracy:false → don't wait on a GPS fix (lab desktops
-    //    have no GPS; IP/Wi-Fi positioning is enough and far faster).
-    //  - timeout:10000 → give up a single attempt after 10s instead of hanging.
-    //  - maximumAge:60000 → accept a cached position up to 1 min old.
-    _map.locate({
-        watch              : true,
-        enableHighAccuracy : false,
-        timeout            : 10000,
-        maximumAge         : 60000,
-    });
+    _startGeolocation();
 
     console.log('[MapManager] Map initialised.');
+}
+
+/**
+ * Begin geolocation.
+ *
+ * Bug fix: the previous call used `enableHighAccuracy:false` with a 10s timeout.
+ * On phones where network/Wi-Fi positioning is unavailable (common when only
+ * GPS is enabled), the coarse provider never returns and the request times out
+ * even though the device has a working GPS and full permission. We now:
+ *   1. Fire a single high-accuracy `getCurrentPosition` with a generous timeout
+ *      to get a real GPS fix (a cold fix can take 20–30s).
+ *   2. Start Leaflet's continuous watch with high accuracy too, so the marker
+ *      keeps updating as the user moves.
+ */
+function _startGeolocation() {
+    // Continuous location watch via Leaflet (feeds locationfound → _applyPosition,
+    // and RouteManager's recorder). No `timeout` key: a slow GPS sample should
+    // make the watch wait, not throw "Timeout expired".
+    _map.locate({
+        watch              : true,
+        enableHighAccuracy : true,
+        maximumAge         : 30000,
+    });
+}
+
+/**
+ * Apply a freshly-resolved position: update state, the sidebar label, and the
+ * "you are here" marker. Shared by the one-shot seed and Leaflet's watch.
+ *
+ * @param {number} lat
+ * @param {number} lng
+ */
+function _applyPosition(lat, lng) {
+    _currLat = lat;
+    _currLng = lng;
+    _geoErrorNotified = false; // a good fix arrived — allow future error toasts again
+
+    const label = document.querySelector('#latlon label');
+    if (label) label.textContent = `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
+
+    const latlng = L.latLng(lat, lng);
+    if (!_locationMarker) {
+        _locationMarker = L.circleMarker(latlng, {
+            radius: 8, color: '#ffffff', fillColor: '#2196F3', fillOpacity: 1, weight: 2,
+        }).addTo(_map).bindPopup('You are here');
+    } else {
+        _locationMarker.setLatLng(latlng);
+    }
 }
 
 /**

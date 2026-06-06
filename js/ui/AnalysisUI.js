@@ -41,6 +41,13 @@ import {
     buildJobData,
     queueJob,
 }                                   from '../services/AnalysisService.js';
+import {
+    isConfigured       as serverConfigured,
+    getServerConfig,
+    checkServerHealth,
+    getServerSteps,
+    runJobOnServer,
+}                                   from '../services/ServerService.js';
 import { getSpots, getExternalFiles } from '../data/MasterData.js';
 import { getWatcherStatus } from '../data/Repository.js';
 import { showToast }                from './Toast.js';
@@ -82,6 +89,15 @@ let _heartbeatInterval = null;
  * only once, regardless of how many times the popup is opened.
  */
 let _fileSelectorListenerAttached = false;
+
+/** Compute backend: false = local watcher (default), true = lab server. */
+let _serverMode = false;
+
+/**
+ * True while a server job is uploading/running/downloading. Suppresses the
+ * heartbeat from overwriting the live progress text in the status pill.
+ */
+let _runningServerJob = false;
 
 // ---------------------------------------------------------------------------
 // DOM element cache — lazy init
@@ -140,11 +156,18 @@ export function initAnalysis() {
             // Attach the single delegated file-selector listener (idempotent)
             _initFileSelectorListener();
 
+            _applyModeStyles();
             _checkStatus();
             _loadScripts();
             _startHeartbeat();
         });
     }
+
+    // Compute-mode toggle (Local Watcher vs Lab Server) — delegated.
+    document.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest && e.target.closest('.analysis-mode-btn');
+        if (btn) _setMode(btn.dataset.mode);
+    });
 
     // Close button — also stops the heartbeat
     document.addEventListener('click', (e) => {
@@ -195,8 +218,56 @@ function _stopHeartbeat() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Compute-mode toggle (Local Watcher vs Lab Server)
+// ---------------------------------------------------------------------------
+
 /**
- * Read watcher status.json and update the indicator dot + status text.
+ * Switch the active compute backend and refresh status + script list.
+ * @param {'watcher'|'server'} mode
+ * @private
+ */
+function _setMode(mode) {
+    const next = mode === 'server';
+    if (next === _serverMode) return;
+    _serverMode = next;
+    _applyModeStyles();
+    // Reset the script dropdown so it reloads from the right source.
+    if (els.scriptSelect) els.scriptSelect.innerHTML = '<option value="">Loading scripts...</option>';
+    _currentScript = null;
+    if (els.fileSelector) els.fileSelector.innerHTML =
+        '<p style="padding:10px; color:var(--text-muted);">Select a script first...</p>';
+    if (els.paramsContainer) els.paramsContainer.style.display = 'none';
+    if (els.runBtn) { els.runBtn.dataset.formReady = 'false'; els.runBtn.disabled = true; }
+    _checkStatus();
+    _loadScripts();
+}
+
+/**
+ * Reflect the active mode in the toggle buttons + contextual help boxes.
+ * @private
+ */
+function _applyModeStyles() {
+    document.querySelectorAll('.analysis-mode-btn').forEach(btn => {
+        const active = (btn.dataset.mode === 'server') === _serverMode;
+        btn.style.background = active ? 'var(--accent-blue)' : 'var(--bg-surface-alt)';
+        btn.style.color      = active ? '#fff' : 'var(--text-dark)';
+    });
+
+    const serverHelp  = document.getElementById('server-help');
+    const watcherHelp = document.getElementById('watcher-offline-help');
+    if (serverHelp)  serverHelp.style.display  = _serverMode ? 'block' : 'none';
+    // The watcher-offline help is only ever relevant in watcher mode; its own
+    // visibility within watcher mode is still driven by _checkStatus.
+    if (watcherHelp && _serverMode) watcherHelp.style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Status check — dispatches to watcher or server
+// ---------------------------------------------------------------------------
+
+/**
+ * Update the indicator dot + status text for the active backend.
  *
  * Bug fix: colours are now applied to `style.color` on the ● text character
  * (els.statusIndicator), not `style.backgroundColor`, which coloured the box
@@ -205,6 +276,11 @@ function _stopHeartbeat() {
  * @private
  */
 async function _checkStatus() {
+    // Never clobber the live progress text while a server job is running.
+    if (_runningServerJob) return;
+
+    if (_serverMode) return _checkServerStatus();
+
     try {
         const rawStatus  = await getWatcherStatus();
         const descriptor = getWatcherOnlineStatus(rawStatus);
@@ -228,6 +304,41 @@ async function _checkStatus() {
     }
 }
 
+/**
+ * Server-mode status: probe /health and reflect reachability in the pill.
+ * @private
+ */
+async function _checkServerStatus() {
+    if (!serverConfigured()) {
+        if (els.statusIndicator) els.statusIndicator.style.color = '#dc3545';
+        if (els.statusText)      els.statusText.textContent =
+            'Server not configured (Config.server)';
+        if (els.runBtn) { els.runBtn.disabled = true; els.runBtn.textContent = 'Run on Server'; }
+        const d = document.getElementById('server-help-detail');
+        if (d) d.innerHTML = '<br><strong>Set Config.server.baseUrl and apiKey.</strong>';
+        return;
+    }
+
+    const { online, error } = await checkServerHealth();
+    if (els.statusIndicator) els.statusIndicator.style.color = online ? '#28A745' : '#dc3545';
+    if (els.statusText) {
+        const { baseUrl } = getServerConfig();
+        els.statusText.textContent = online ? `Server Online (${baseUrl})` : 'Server Offline';
+    }
+    const d = document.getElementById('server-help-detail');
+    if (d) d.innerHTML = online ? '' : `<br><strong>Cannot reach server.</strong> ${error || ''}`;
+
+    if (els.runBtn) {
+        const isFormReady = els.runBtn.dataset.formReady === 'true';
+        els.runBtn.disabled    = !online || !isFormReady;
+        els.runBtn.textContent = 'Run on Server';
+    }
+
+    if (els.scriptSelect && els.scriptSelect.options.length <= 1 && online) {
+        _loadScripts();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Script loading
 // ---------------------------------------------------------------------------
@@ -241,14 +352,28 @@ async function _loadScripts() {
     if (!els.scriptSelect) return;
 
     const currentSelection  = els.scriptSelect.value;
-    const installedScripts  = await loadInstalledScripts();
+
+    // Source the script list from the active backend.
+    let installedScripts;
+    if (_serverMode) {
+        try {
+            installedScripts = serverConfigured() ? await getServerSteps() : [];
+        } catch (e) {
+            console.error('[AnalysisUI] Failed to load server steps:', e);
+            installedScripts = [];
+        }
+    } else {
+        installedScripts = await loadInstalledScripts();
+    }
 
     els.scriptSelect.innerHTML = '<option value="">-- Select Script --</option>';
 
     if (installedScripts.length === 0) {
         const opt     = document.createElement('option');
         opt.disabled  = true;
-        opt.textContent = 'Connect Watcher to load scripts';
+        opt.textContent = _serverMode
+            ? 'Connect to a reachable server to load scripts'
+            : 'Connect Watcher to load scripts';
         els.scriptSelect.appendChild(opt);
         return;
     }
@@ -504,49 +629,44 @@ function _renderCalendar(which) {
 function _renderSpotDateSelector(label) {
     const spots = getSpots();
 
-    let spotsHtml = '<div style="max-height:150px; overflow-y:auto; border:1px solid var(--border-color); padding:5px; border-radius:4px; background:var(--bg-surface);">';
+    let spotsHtml = `
+        <label class="analysis-selectall">
+            <input type="checkbox" id="analysis-select-all-spots"> Select all spots (${spots.length})
+        </label>
+        <div class="analysis-spot-grid">`;
     spots.forEach(s => {
         spotsHtml += `
-            <label style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer;">
+            <label class="analysis-spot-card">
                 <input type="checkbox" class="analysis-spot-checkbox" value="${s.spotId}">
-                <strong>${s.name}</strong>
+                <span>${s.name}</span>
             </label>
         `;
     });
     spotsHtml += '</div>';
 
-    // Init calendar state to current month
-    const now = new Date();
-    _calendarState.start = { year: now.getFullYear(), month: now.getMonth() };
-    _calendarState.end   = { year: now.getFullYear(), month: now.getMonth() };
     _availableDates = new Set();
 
-    // Append to the file-selector panel
+    // Compact native date range (the old data-aware calendar is no longer needed
+    // — the UI doesn't track which dates have data anymore).
     els.fileSelector.innerHTML += `
-        <div style="margin-bottom:15px;">
-            <label style="display:block; margin-bottom:5px; font-weight:bold;">${label}</label>
+        <div style="margin-bottom:14px;">
+            <label style="display:block; margin-bottom:6px; font-weight:700;">${label}</label>
             ${spotsHtml}
         </div>
-        <div style="display:flex; gap:10px; margin-bottom:15px;">
+        <div style="display:flex; gap:12px; margin-bottom:6px;">
             <div style="flex:1;">
-                <label style="display:block; margin-bottom:5px; font-weight:bold;">Start Date</label>
-                <input type="hidden" id="analysis-start-date" value="">
-                <div id="cal-start" style="border:1px solid var(--border-color); border-radius:6px; padding:8px; background:var(--bg-surface);"></div>
+                <label style="display:block; margin-bottom:4px; font-size:0.82rem; font-weight:700; color:var(--text-muted);">Start date</label>
+                <input type="date" id="analysis-start-date" value="">
             </div>
             <div style="flex:1;">
-                <label style="display:block; margin-bottom:5px; font-weight:bold;">End Date</label>
-                <input type="hidden" id="analysis-end-date" value="">
-                <div id="cal-end" style="border:1px solid var(--border-color); border-radius:6px; padding:8px; background:var(--bg-surface);"></div>
+                <label style="display:block; margin-bottom:4px; font-size:0.82rem; font-weight:700; color:var(--text-muted);">End date</label>
+                <input type="date" id="analysis-end-date" value="">
             </div>
         </div>
-        <div id="analysis-file-acknowledgement" style="padding:10px; background:var(--bg-surface-alt); border-radius:4px; font-size:0.9rem; color:var(--text-muted);">
+        <div id="analysis-file-acknowledgement" style="padding:10px; background:var(--bg-surface-alt); border-radius:var(--radius-md); font-size:0.85rem; color:var(--text-muted);">
             Select spots and a date range, then queue your job.
         </div>
     `;
-
-    // Initial render (empty — no spots selected yet)
-    _renderCalendar('start');
-    _renderCalendar('end');
 }
 
 /**
@@ -562,12 +682,22 @@ function _renderSpotDateSelector(label) {
 function _initFileSelectorListener() {
     if (_fileSelectorListenerAttached || !els.fileSelector) return;
 
-    // Change listener — spot checkboxes
+    // Change listener — spot checkboxes + select-all
     els.fileSelector.addEventListener('change', (e) => {
-        const isCheckbox = e.target.classList.contains('analysis-spot-checkbox');
-
-        if (isCheckbox) {
+        if (e.target.id === 'analysis-select-all-spots') {
+            els.fileSelector
+                .querySelectorAll('.analysis-spot-checkbox')
+                .forEach(cb => { cb.checked = e.target.checked; });
             _refreshAvailableDates();
+            _updateFormReadiness();
+            return;
+        }
+        if (e.target.classList.contains('analysis-spot-checkbox')) {
+            _refreshAvailableDates();
+            _updateFormReadiness();
+            return;
+        }
+        if (e.target.id === 'analysis-start-date' || e.target.id === 'analysis-end-date') {
             _updateFormReadiness();
         }
     });
@@ -691,6 +821,13 @@ async function _handleRunClick() {
     const spots         = getSpots();
     const externalFiles = getExternalFiles();
 
+    // ── Server mode: upload → run → poll → download (see ServerService) ──────
+    if (_serverMode) {
+        await _runOnServer({ jobName, spotIds, startDate, endDate, dynamicParams, spots, externalFiles });
+        return;
+    }
+
+    // ── Watcher mode: write a job descriptor into jobs/queue ─────────────────
     const jobData = buildJobData(
         jobName,
         _currentScript,
@@ -724,3 +861,41 @@ async function _handleRunClick() {
         }
     }
 }
+
+/**
+ * Run the selected step on the lab server, streaming progress into the status
+ * pill. The popup stays open so the user can watch upload/run/download; on
+ * success it closes and the Jobs dashboard will show the downloaded results.
+ *
+ * @private
+ */
+async function _runOnServer({ jobName, spotIds, startDate, endDate, dynamicParams, spots, externalFiles }) {
+    _runningServerJob = true;
+    const setStatus = (msg) => { if (els.statusText) els.statusText.textContent = msg; };
+    if (els.statusIndicator) els.statusIndicator.style.color = '#FFC107';
+
+    if (els.runBtn) { els.runBtn.textContent = 'Running…'; els.runBtn.disabled = true; }
+
+    try {
+        const res = await runJobOnServer({
+            jobName,
+            currentScript: _currentScript,
+            spotIds, startDate, endDate, dynamicParams,
+            spots, externalFiles,
+            onProgress: setStatus,
+        });
+
+        showToast(`Server job complete — ${res.files} file(s) downloaded.`, 'success');
+        closeModal('analysis-popup');
+        if (els.jobNameInput) els.jobNameInput.value = '';
+        _stopHeartbeat();
+    } catch (e) {
+        showToast(`Server job failed: ${e.message}`, 'failed');
+        setStatus(`Failed: ${e.message}`);
+        if (els.statusIndicator) els.statusIndicator.style.color = '#dc3545';
+    } finally {
+        _runningServerJob = false;
+        if (els.runBtn) { els.runBtn.textContent = 'Run on Server'; els.runBtn.disabled = false; }
+    }
+}
+// EOF — AnalysisUI (watcher + server compute modes)

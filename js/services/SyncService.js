@@ -733,6 +733,77 @@ export async function resolveMasterConflict(action) {
 }
 
 // ---------------------------------------------------------------------------
+// Interactive diff resolution (git-diff style conflict UI)
+// ---------------------------------------------------------------------------
+
+/**
+ * Snapshot the data needed to render the interactive local-vs-Drive diff.
+ * Returns the live local state and the cached remote master captured when the
+ * conflict was detected. Null remote means there is nothing to diff against.
+ *
+ * @returns {{ local: object|null, remote: object|null, fileId: string|null }}
+ */
+export function getConflictSnapshot() {
+    return {
+        local:  getLocalState(),
+        remote: remoteMasterCache?.data || null,
+        fileId: remoteMasterCache?.fileId || null,
+    };
+}
+
+/**
+ * Apply a fully user-resolved master state produced by the diff UI.
+ *
+ * The resolved state is the single source of truth chosen by the user — it is
+ * saved locally AND written to Drive so both sides end up identical (the whole
+ * point of the diff workflow). Imported projects are kept locally but stripped
+ * from the Drive copy (they live in their owners' Drives, not ours).
+ *
+ * @param {object} resolvedState  Full v2 masterData to become the new truth.
+ * @returns {Promise<void>}
+ */
+export async function applyResolvedConflict(resolvedState) {
+    const fileId = remoteMasterCache?.fileId || null;
+
+    // 1) Local truth.
+    await replaceState(resolvedState);
+
+    // 2) Drive truth — strip imported projects (not part of our Drive master).
+    if (fileId && getAccessToken()) {
+        const driveState = {
+            ...resolvedState,
+            projects: (resolvedState.projects || []).filter(p => !p.shared?.isImported),
+        };
+        const blob = new Blob([JSON.stringify(driveState, null, 2)], { type: 'application/json' });
+        try {
+            await DriveService.updateDriveFile(fileId, blob);
+        } catch (err) {
+            console.error('[SyncService] applyResolvedConflict: Drive write failed:', err);
+            EventBus.emit(EVENTS.TOAST_SHOW, {
+                message: `Saved locally, but Drive update failed: ${err.message}`,
+                type: 'error',
+            });
+        }
+    }
+
+    // 3) Media follows metadata: pull anything referenced but missing, push
+    //    local-only files up.
+    try {
+        const { reconcileProjectFiles } = await import('./ProjectFilesSync.js');
+        const { getActiveProject } = await import('../data/MasterData.js');
+        const active = getActiveProject();
+        if (active) await reconcileProjectFiles(active);
+    } catch (e) {
+        console.warn('[SyncService] media reconcile after resolution failed:', e.message);
+    }
+
+    remoteMasterCache = null;
+    EventBus.emit(EVENTS.DATA_UPDATED);
+    EventBus.emit(EVENTS.PROJECT_CHANGED);
+    EventBus.emit(EVENTS.TOAST_SHOW, { message: 'Local and Drive are now in sync.', type: 'success' });
+}
+
+// ---------------------------------------------------------------------------
 // Dataset merge (last-write-wins at item level)
 // ---------------------------------------------------------------------------
 

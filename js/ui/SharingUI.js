@@ -62,9 +62,18 @@ function _populateShareModal() {
     const state = getLocalState();
     projectList.innerHTML = '';
 
+    let renderable = 0;
+
     for (const p of state.projects) {
-        // Skip imported projects — can't reshare someone else's project
-        if (p.shared?.isImported) continue;
+        const info       = getSharingInfo(p);
+        const isImported = info.isImported;
+        // Imported projects can only be re-shared if WE are an editor (writer).
+        // The Drive folder's owner never changes — we just grant new permissions
+        // on the same shared folder. Viewer-only imports cannot be re-shared.
+        const isViewerOnlyImport = isImported && info.permission !== 'writer';
+        if (isViewerOnlyImport) continue;
+
+        renderable++;
 
         const div   = document.createElement('div');
         const label = document.createElement('label');
@@ -75,18 +84,41 @@ function _populateShareModal() {
         cb.name     = 'share_project';
         cb.value    = p.id;
 
-        // Pre-select current project
+        // Pre-select the project the user is currently viewing. This fixes the
+        // bug where Share defaulted to the first project in the list (often a
+        // stray "Untitled") instead of the open project.
         if (p.id === state.currentProjectId) cb.checked = true;
 
-        const info = getSharingInfo(p);
-        let nameText = ` ${p.name}`;
-        if (info.isShared) {
+        let nameText = p.name;
+        if (isImported) {
+            // Re-sharing a project we edit — make the role + ownership clear.
+            nameText += ` (editor — owner: ${info.ownerEmail || 'unknown'})`;
+        } else if (info.isShared) {
             nameText += ` (shared with ${info.collaboratorCount})`;
         }
 
-        label.append(cb, nameText);
+        const span = document.createElement('span');
+        span.className = 'share-project-name';
+        span.textContent = nameText;
+        span.title = nameText; // full text on hover since we ellipsize
+
+        label.append(cb, span);
         div.append(label);
         projectList.appendChild(div);
+    }
+
+    // Fallback: nothing pre-selected (e.g. current project was filtered out) →
+    // select the first available so Share never silently targets the wrong one.
+    if (renderable > 0) {
+        const checked = projectList.querySelector('input[name="share_project"]:checked');
+        if (!checked) {
+            const first = projectList.querySelector('input[name="share_project"]');
+            if (first) first.checked = true;
+        }
+    } else {
+        projectList.innerHTML =
+            '<p style="font-size:0.85rem; color:var(--text-muted);">No shareable projects. ' +
+            'You can only re-share projects you own or are an editor of.</p>';
     }
 }
 
@@ -144,7 +176,8 @@ function _initShareModal() {
             const linkDisplay = document.getElementById('share-link-display');
             if (linkDisplay && lastShareLink) {
                 linkDisplay.textContent = lastShareLink;
-                linkDisplay.parentElement.style.display = 'block';
+                const section = document.getElementById('share-link-section');
+                if (section) section.style.display = 'block';
             }
 
             showToast(

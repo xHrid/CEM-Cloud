@@ -162,24 +162,22 @@ async function _loadJobsSidebar() {
         }
 
         jobs.forEach(job => {
-            const div              = document.createElement('div');
-            div.style.padding      = '15px';
-            div.style.borderBottom = '1px solid var(--border-color)';
-            div.style.cursor       = 'pointer';
+            const div       = document.createElement('div');
+            div.className   = 'job-row';
 
             // Colour-code by status
             const color = _statusColor(job.current_status);
 
             div.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-dark); flex:1;">
+                    <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-dark); flex:1;">
                         ${job.job_name || 'Unnamed Job'}
                     </div>
-                    <button class="delete-job-btn" title="Delete job" style="background:none; border:none; color:#dc3545; cursor:pointer; font-size:1rem; padding:2px 6px;">🗑</button>
+                    <button class="delete-job-btn" title="Delete job" style="background:none; border:none; color:var(--danger-red); cursor:pointer; font-size:1rem; padding:2px 6px;">🗑</button>
                 </div>
-                <div style="display:flex; justify-content:space-between; font-size:0.8rem; color:var(--text-muted); margin-top:5px;">
-                    <span style="color:${color}; font-weight:bold;">${job.current_status.toUpperCase()}</span>
-                    <span>${new Date(job.created_at).toLocaleDateString()}</span>
+                <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:var(--text-muted); margin-top:6px;">
+                    <span style="color:${color}; font-weight:700; letter-spacing:0.04em;">${job.current_status.toUpperCase()}</span>
+                    <span style="font-family:var(--font-mono);">${new Date(job.created_at).toLocaleDateString()}</span>
                 </div>
             `;
 
@@ -199,7 +197,11 @@ async function _loadJobsSidebar() {
                 }
             });
 
-            div.addEventListener('click', () => _renderJobDetails(job, color));
+            div.addEventListener('click', () => {
+                els.listSidebar.querySelectorAll('.job-row.active').forEach(r => r.classList.remove('active'));
+                div.classList.add('active');
+                _renderJobDetails(job, color);
+            });
             els.listSidebar.appendChild(div);
         });
 
@@ -251,20 +253,14 @@ async function _renderJobDetails(job, statusColor) {
         }
 
         files.forEach(file => {
-            const btn               = document.createElement('button');
-            btn.textContent         = file.name;
-            btn.style.padding       = '6px 12px';
-            btn.style.border        = '1px solid var(--border-color)';
-            btn.style.borderRadius  = '20px';
-            btn.style.background    = 'var(--bg-surface)';
-            btn.style.cursor        = 'pointer';
-            btn.style.margin        = '2px';
-            btn.style.color         = 'var(--text-dark)';
+            const btn       = document.createElement('button');
+            btn.textContent = file.name;
+            btn.className   = 'job-file-chip';
 
             // Colour-code border by file type
-            if (file.name.endsWith('.csv'))                               btn.style.borderColor = '#28a745';
-            if (file.name.endsWith('.log'))                               btn.style.borderColor = '#dc3545';
-            if (file.name.endsWith('.png') || file.name.endsWith('.jpg')) btn.style.borderColor = '#007bff';
+            if (file.name.endsWith('.csv'))                               btn.style.borderColor = '#3f8f4f';
+            if (file.name.endsWith('.log'))                               btn.style.borderColor = 'var(--danger-red)';
+            if (file.name.endsWith('.png') || file.name.endsWith('.jpg')) btn.style.borderColor = 'var(--sky)';
 
             btn.addEventListener('click', () => _previewFile(file));
             els.viewerFileList.appendChild(btn);

@@ -34,7 +34,7 @@ import Config               from './Config.js';
 // iteration.  The paths below match the agreed directory structure.
 // ---------------------------------------------------------------------------
 import { initAuth, requestLogin }      from '../services/AuthService.js';
-import { initStorage, checkFileExists, saveFile } from '../data/StorageAdapter.js';
+import { initStorage, checkFileExists, saveFile, getStorageEstimate } from '../data/StorageAdapter.js';
 import { ensureMasterJson }            from '../data/MasterData.js';
 import { initSyncEngine, onAuthReady } from '../services/SyncEngine.js';
 import { initSyncPanel }               from '../ui/SyncPanel.js';
@@ -88,6 +88,23 @@ function _onStorageReady(storageInfo) {
             ? `📂 Local Folder: ${storageInfo.name}`
             : `💾 Browser Storage (IndexedDB)`;
         folderStatus.style.display = 'block';
+
+        // For browser storage, show how much of the quota is used so the user
+        // has visibility long before they ever hit a "storage full" wall.
+        if (storageInfo.type !== 'native') {
+            getStorageEstimate().then((est) => {
+                if (est.usage == null || est.quota == null) return;
+                const used = _fmtBytes(est.usage);
+                const cap  = _fmtBytes(est.quota);
+                folderStatus.textContent = `💾 Browser Storage — ${used} of ${cap} used (${est.percent}%)`;
+                if (est.percent != null && est.percent >= 90) {
+                    EventBus.emit(EVENTS.TOAST_SHOW, {
+                        message: `Storage is ${est.percent}% full. Remove old projects/media or free device space soon.`,
+                        type: 'failed',
+                    });
+                }
+            });
+        }
     }
 
     if (driveControls) driveControls.style.display = 'flex';
@@ -95,6 +112,20 @@ function _onStorageReady(storageInfo) {
     // Notify all subscribers (map, UI, sync) that storage is open
     EventBus.emit(EVENTS.STORAGE_READY, storageInfo);
     EventBus.emit(EVENTS.DATA_UPDATED,  null);
+}
+
+/**
+ * Human-readable byte size (e.g. 1.4 GB).
+ * @param {number} n
+ * @returns {string}
+ */
+function _fmtBytes(n) {
+    if (!n && n !== 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
 /**

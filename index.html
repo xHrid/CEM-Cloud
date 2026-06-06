@@ -6,7 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- color-scheme managed via data-theme attribute + CSS -->
     <title>Continuous Ecological Monitoring Toolkit</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/png" href="./images/assets/favi.png">
 
     <link rel="stylesheet" href="./leaflet/leaflet.css" />
@@ -45,7 +47,7 @@
 
             <div class="add-site-div">
                 <button class="add_site">Add Site</button>
-                <button id="import-media-btn" class="control-button">Import</button>
+                <button id="import-media-btn" class="control-button">Import Media</button>
                 <button id="analysis-btn" class="control-button">Analysis</button>
                 <button id="jobs-btn" class="control-button">Jobs</button>
             </div>
@@ -75,32 +77,28 @@
     <dialog id="popup-form" class="modal-dialog">
         <div class="popup-content">
             <form id="spot-form">
-                <input type="text" name="name" placeholder="Spot Name" autocomplete="off" />
-                <input type="text" name="birds" placeholder="Birds Seen" autocomplete="off" />
-                <textarea name="description" placeholder="Description"></textarea>
+                <h3>New Spot</h3>
+                <input type="text" name="name" placeholder="Spot name" autocomplete="off" />
+                <textarea name="description" placeholder="Description / field notes"></textarea>
 
                 <!-- Location fields -->
-                <div style="margin:8px 0;">
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9rem;">
-                        <input type="checkbox" id="use-current-location" checked />
-                        Use Current Location
-                    </label>
-                    <div id="custom-location-fields" style="display:none; gap:8px; margin-top:6px;">
-                        <input type="number" id="custom-lat" placeholder="Latitude" step="any" style="flex:1;" />
-                        <input type="number" id="custom-lon" placeholder="Longitude" step="any" style="flex:1;" />
-                    </div>
+                <label class="field-toggle">
+                    <input type="checkbox" id="use-current-location" checked />
+                    Use current location
+                </label>
+                <div id="custom-location-fields" class="inline-fields" style="display:none;">
+                    <input type="number" id="custom-lat" placeholder="Latitude" step="any" />
+                    <input type="number" id="custom-lon" placeholder="Longitude" step="any" />
                 </div>
 
                 <!-- Date/Time fields -->
-                <div style="margin:8px 0;">
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9rem;">
-                        <input type="checkbox" id="use-current-time" checked />
-                        Use Current Date/Time
-                    </label>
-                    <div id="custom-time-fields" style="display:none; gap:8px; margin-top:6px;">
-                        <input type="date" id="custom-date" style="flex:1;" />
-                        <input type="time" id="custom-time" step="1" style="flex:1;" />
-                    </div>
+                <label class="field-toggle">
+                    <input type="checkbox" id="use-current-time" checked />
+                    Use current date &amp; time
+                </label>
+                <div id="custom-time-fields" class="inline-fields" style="display:none;">
+                    <input type="date" id="custom-date" />
+                    <input type="time" id="custom-time" step="1" />
                 </div>
 
                 <div class="media-controls">
@@ -170,11 +168,11 @@
                 <input type="file" id="external-file-input" name="files" class="import-file-input" multiple required>
 
                 <div style="margin:10px 0;">
-                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9rem;">
+                    <label class="ref-toggle">
                         <input type="checkbox" id="import-as-reference" />
-                        Import as Reference
-                        <span style="font-size:0.8rem; color:var(--text-muted);">(store path only, don't copy files)</span>
+                        Import as reference
                     </label>
+                    <span class="ref-hint">Store path only — don't copy files.</span>
                     <div id="reference-base-dir-container" style="display:none; margin-top:8px; padding:8px; background:var(--bg-surface-alt); border-radius:4px;">
                         <label for="reference-base-dir" style="display:block; font-size:0.85rem; font-weight:bold; margin-bottom:4px;">
                             Base Directory Path
@@ -197,8 +195,8 @@
     </dialog>
 
     <!-- ── Analysis Hub ──────────────────────────────────────────────────── -->
-    <dialog id="analysis-popup" class="modal-dialog" style="max-width: min(90vw, 600px);">
-        <div class="popup-content import-popup-content" style="max-width: 600px; max-height: 90vh; display: flex; flex-direction: column;">
+    <dialog id="analysis-popup" class="modal-dialog" style="max-width: min(94vw, 780px);">
+        <div class="popup-content import-popup-content" style="max-width: 780px; max-height: 90vh; display: flex; flex-direction: column;">
 
             <div style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px;">
                 <label class="div-label">Job Name <span style="color:red">*</span></label>
@@ -211,6 +209,27 @@
                     <span id="watcher-indicator" style="color: #ccc; font-size: 1.2rem; line-height: 0;">●</span>
                     <span id="watcher-status-text" style="margin-left: 5px; color: var(--text-muted);">Connecting...</span>
                 </div>
+            </div>
+
+            <!-- Compute backend: local watcher vs the Dockerised lab server. -->
+            <div id="analysis-mode-toggle" style="display:flex; gap:6px; margin-bottom:12px;">
+                <button type="button" class="analysis-mode-btn" data-mode="watcher"
+                    style="flex:1; padding:8px; border:1px solid var(--border-color); border-radius:6px; cursor:pointer; font-weight:600;">
+                    💻 Local Watcher
+                </button>
+                <button type="button" class="analysis-mode-btn" data-mode="server"
+                    style="flex:1; padding:8px; border:1px solid var(--border-color); border-radius:6px; cursor:pointer; font-weight:600;">
+                    🖥️ Connect to Server
+                </button>
+            </div>
+
+            <div id="server-help"
+                style="display:none; background:#e7f3ff; color:#0b5394; padding:12px; border-radius:8px; border:1px solid #b6dafb; margin-bottom:15px; font-size:0.9rem;">
+                <strong>🖥️ Lab Server mode</strong><br>
+                Compute runs on the lab Docker server — no local watcher needed.
+                Audio is uploaded, the selected step runs there, and results are
+                downloaded back into this project.
+                <span id="server-help-detail"></span>
             </div>
 
             <div id="watcher-offline-help"
@@ -235,8 +254,7 @@
                 </select>
 
                 <label class="div-label">2. Select Input Data</label>
-                <div id="analysis-file-selector" class="import-multi-select-box"
-                    style="height: 120px; resize: vertical; margin-bottom: 20px;">
+                <div id="analysis-file-selector" class="import-multi-select-box" style="margin-bottom: 20px;">
                     <p style="padding:10px; color: var(--text-muted);">Select a script first...</p>
                 </div>
 
@@ -258,18 +276,17 @@
 
     <!-- ── Jobs Dashboard ────────────────────────────────────────────────── -->
     <dialog id="jobs-popup" class="modal-dialog modal-dialog--wide">
-        <div class="popup-content import-popup-content" style="max-width: 90vw; height: 85vh; display: flex; flex-direction: column; padding: 0;">
-            <div class="external-data-header" style="padding: 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
-                <h3 style="margin:0; color: var(--text-dark);">Analysis Jobs Dashboard</h3>
+        <div class="popup-content import-popup-content">
+            <div class="external-data-header" style="padding: 16px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin:0;">Analysis Jobs</h3>
                 <div style="display: flex; gap: 10px;">
-                    <button id="refresh-jobs-btn" class="control-button" style="padding: 5px 10px;">↻ Refresh</button>
+                    <button id="refresh-jobs-btn" class="small-btn" style="padding: 6px 12px; flex:none;">↻ Refresh</button>
                     <button type="button" id="close-jobs-btn" class="close-viewer-btn" style="margin:0;">x</button>
                 </div>
             </div>
-            <div style="display: flex; flex: 1; overflow: hidden;">
-                <div id="jobs-list-sidebar" style="width: 300px; border-right: 1px solid var(--border-color); overflow-y: auto; background: var(--bg-surface-alt);">
-                </div>
-                <div id="job-result-viewer" style="flex: 1; overflow-y: auto; padding: 20px; background: var(--bg-surface);">
+            <div class="jobs-layout">
+                <div id="jobs-list-sidebar"></div>
+                <div id="job-result-viewer">
                     <div id="job-viewer-placeholder" style="text-align: center; color: var(--text-muted); margin-top: 100px;">
                         Select a job from the left to view details and results.
                     </div>
@@ -393,8 +410,8 @@
                 view and edit the project.
             </p>
             <div class="button-group" style="margin-bottom: 12px;">
-                <button type="button" id="btn-pick-drive-folder" class="popup-btn">
-                    📂 Select shared project (project_data.json)
+                <button type="button" id="btn-pick-drive-folder" class="popup-btn" style="white-space:nowrap;">
+                    📂 Open shared project
                 </button>
             </div>
             <form id="import-project-form">

@@ -31,15 +31,15 @@ import { openModal, closeModal }     from './ModalManager.js';
 
 export function initProjectUI() {
     _initProjectDropdown();
-    _initConflictModal();
+    _initConflictModal(); // legacy modal kept as a fallback; no longer auto-opened
     _initImportMediaForm();
 
     EventBus.on(EVENTS.STORAGE_READY,  _renderProjectList);
     EventBus.on(EVENTS.PROJECT_CHANGED, _renderProjectList);
 
-    EventBus.on(EVENTS.MASTER_SYNC_CONFLICT, ({ data }) => {
-        _openConflictModal(data.localCount, data.remoteCount);
-    });
+    // Conflict handling is now owned by SyncDiffUI (interactive git-diff style
+    // resolver). We intentionally do NOT open the old localCount/remoteCount
+    // modal here anymore.
 }
 
 // ---------------------------------------------------------------------------

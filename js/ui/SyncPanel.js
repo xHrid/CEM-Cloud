@@ -42,25 +42,49 @@ let _dialog = null;
 
 export function initSyncPanel() {
     // Keep the pill in sync with engine status.
-    EventBus.on(EVENTS.SYNC_STATUS, ({ data }) => _renderPill(data.status));
+    EventBus.on(EVENTS.SYNC_STATUS, ({ data }) => _renderPill(data.status, data.lastSyncAt));
 
     // Delegated click — works regardless of when the pill is injected.
     document.addEventListener('click', (e) => {
         if (e.target.closest?.('#btn-sync-pill')) _openPanel();
     });
 
-    _renderPill(getSyncState().status);
+    // Refresh the relative "X ago" label on a slow tick (not a live clock).
+    setInterval(() => {
+        const st = getSyncState();
+        if (st.status === 'idle') _renderPill(st.status, st.lastSyncAt);
+    }, 30 * 1000);
+
+    const st = getSyncState();
+    _renderPill(st.status, st.lastSyncAt);
 }
 
 // ---------------------------------------------------------------------------
 // Pill
 // ---------------------------------------------------------------------------
 
-function _renderPill(status) {
+/**
+ * Coarse relative time, e.g. "just now", "3m ago", "2h ago". Avoids a ticking
+ * clock — granularity is minutes/hours.
+ * @param {number|null} ts  epoch ms
+ * @returns {string}
+ */
+function _relTime(ts) {
+    if (!ts) return '';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 45)   return 'just now';
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+}
+
+function _renderPill(status, lastSyncAt) {
     const pill = document.getElementById('btn-sync-pill');
     if (!pill) return;
     const m = STATUS_META[status] || STATUS_META.idle;
-    pill.textContent = `${m.icon} ${m.text}`;
+    let label = m.text;
+    if (status === 'idle' && lastSyncAt) label = `Synced · ${_relTime(lastSyncAt)}`;
+    pill.textContent = `${m.icon} ${label}`;
     pill.style.color = m.color;
 }
 

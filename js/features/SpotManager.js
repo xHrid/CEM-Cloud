@@ -35,10 +35,11 @@
 
 import EventBus, { EVENTS }          from '../core/EventBus.js';
 import { saveSpot, getLocalFileUrl, deleteSpot, deleteExternalFile } from '../data/Repository.js';
-import { getSpots, getExternalFiles } from '../data/MasterData.js';
+import { getSpots, getExternalFiles, getActiveProjectId } from '../data/MasterData.js';
 import { getMap, getCurrentPosition } from './MapManager.js';
 import { showToast }                 from '../ui/Toast.js';
 import { openModal, closeModal }     from '../ui/ModalManager.js';
+import { downscaleImage }            from '../data/imageUtils.js';
 
 // ---------------------------------------------------------------------------
 // Module-private state
@@ -46,6 +47,10 @@ import { openModal, closeModal }     from '../ui/ModalManager.js';
 
 /** @type {L.LayerGroup|null} — the layer that holds all spot circle-markers */
 let _spotsLayer = null;
+
+/** Last active project id seen — used to tell a real project SWITCH apart from a
+ *  background data refresh (sync also emits PROJECT_CHANGED). */
+let _lastProjectId = null;
 
 /**
  * Build a PUBLIC (unauthenticated) hot-link URL for a Drive media file.
@@ -117,7 +122,7 @@ function _setAddMoreMode(spot) {
             useLocCb.checked  = false;
             useLocCb.disabled = true;
         }
-        if (locFields) locFields.style.display = 'flex';
+        if (locFields) locFields.style.display = 'grid';
         if (latInput) {
             latInput.value    = spot.latitude;
             latInput.readOnly = true;
@@ -261,10 +266,18 @@ async function _handleSpotFormSubmit(e) {
     // Add More mode — name is locked to the original spot.
     const spotName = _addMoreSpot ? _addMoreSpot.name : form.name.value;
 
-    const imageFile = document.getElementById('image-upload').files[0] || null;
+    let imageFile = document.getElementById('image-upload').files[0] || null;
 
     const statusEl = document.getElementById('status');
     if (statusEl) statusEl.textContent = 'Saving to disk...';
+
+    // Downscale large camera photos before storage so a few pictures can't
+    // exhaust the mobile IndexedDB quota ("storage full").
+    if (imageFile) {
+        if (statusEl) statusEl.textContent = 'Optimising photo...';
+        imageFile = await downscaleImage(imageFile);
+        if (statusEl) statusEl.textContent = 'Saving to disk...';
+    }
 
     try {
         await saveSpot(
@@ -273,7 +286,6 @@ async function _handleSpotFormSubmit(e) {
                 description : form.description.value,
                 latitude    : lat,
                 longitude   : lng,
-                birds       : form.birds?.value || '',
             },
             imageFile,
             _recordedAudioBlob,
@@ -354,62 +366,73 @@ async function _showSpotDetails(spot) {
     );
     const hasExternal = externalFiles.length > 0;
 
-    // Build header with action buttons
+    // Build header + a horizontal rail of temporal entries (see them side by side)
+    const plural = spotEntries.length === 1 ? 'observation' : 'observations';
     let html = `
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="spot-detail-head">
             <h2 id="spot-name"></h2>
+            <span class="spot-detail-coords">📍 <span id="spot-coordinates"></span></span>
+            <p style="font-size:0.82rem; color:var(--text-muted); margin-top:6px;">${spotEntries.length} ${plural}</p>
         </div>
-        <p><span id="spot-coordinates"></span></p>
-        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
-            <button id="add-more-spot-btn" class="popup-btn" style="font-size:0.85rem; padding:5px 12px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer;">
-                + Add More
-            </button>
-            <button id="show-external-data-btn" class="show-external-data-btn" ${!hasExternal ? 'disabled' : ''}>
-                External Media (${externalFiles.length})
+        <div class="spot-detail-actions">
+            <button id="add-more-spot-btn" class="popup-btn btn-addmore" style="width:auto; padding:8px 14px;">+ Add observation</button>
+            <button id="show-external-data-btn" class="show-external-data-btn" style="width:auto; margin-top:0;" ${!hasExternal ? 'disabled' : ''}>
+                External media (${externalFiles.length})
             </button>
         </div>
-        <hr>
+        <div class="spot-rail-wrap">
+        ${spotEntries.length > 1 ? '<button class="rail-nav prev" aria-label="Previous">‹</button>' : ''}
+        <div class="spot-entry-rail">
     `;
 
-    // Render each temporal entry
     spotEntries.forEach((entry, idx) => {
-        const obsDate = new Date(entry.timestamp || Date.now()).toLocaleString();
         html += `
-            <div class="spot-entry" style="margin-bottom:15px; padding:10px; background:var(--bg-surface-alt); border-radius:8px; border:1px solid var(--border-color);">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <p style="margin:0;"><small><strong>Entry ${idx + 1}</strong> — <span class="spot-date">${''}</span></small></p>
-                    <button class="delete-spot-entry-btn" data-spot-id="${entry.spotId}" style="background:none; border:none; color:#dc3545; cursor:pointer; font-size:1.1rem;" title="Delete this entry">🗑</button>
-                </div>
-                <p style="margin:5px 0;"><strong>Coords:</strong> <span class="entry-coords">${''}</span></p>
-                <p style="margin:5px 0;"><strong>Description:</strong> <span class="entry-desc">${''}</span></p>
-                <p style="margin:5px 0;"><strong>Birds:</strong> <span class="entry-birds">${''}</span></p>
-                <div class="media-container-img-${idx}" style="margin-top:10px;"></div>
-                <div class="media-container-audio-${idx}" style="margin-top:10px;"></div>
+            <div class="spot-entry">
+                <button class="delete-spot-entry-btn" data-spot-id="${entry.spotId}" title="Delete this observation">🗑</button>
+                <span class="entry-index">Entry ${idx + 1}</span>
+                <span class="entry-date"></span>
+                <div class="entry-field"><span class="k">Coordinates</span><span class="entry-coords" style="font-family:var(--font-mono); font-size:0.82rem;"></span></div>
+                <div class="entry-field"><span class="k">Notes</span><span class="entry-desc"></span></div>
+                <div class="media-container-img-${idx}"></div>
+                <div class="media-container-audio-${idx}"></div>
             </div>
         `;
     });
+    html += `</div>${spotEntries.length > 1 ? '<button class="rail-nav next" aria-label="Next">›</button>' : ''}</div>`;
 
     content.innerHTML = html;
+
+    // Gallery arrows: scroll the rail by one card width.
+    const rail = content.querySelector('.spot-entry-rail');
+    if (rail) {
+        const step = () => (rail.querySelector('.spot-entry')?.getBoundingClientRect().width || rail.clientWidth) + 16;
+        content.querySelector('.rail-nav.prev')?.addEventListener('click', () => rail.scrollBy({ left: -step(), behavior: 'smooth' }));
+        content.querySelector('.rail-nav.next')?.addEventListener('click', () => rail.scrollBy({ left:  step(), behavior: 'smooth' }));
+
+        // No mouse-scrolling the gallery — only buttons or touch swipe. Block
+        // horizontal-intent wheel/trackpad; let vertical wheel scroll the panel.
+        rail.addEventListener('wheel', (e) => {
+            if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) e.preventDefault();
+        }, { passive: false });
+    }
 
     // Set user content via textContent (XSS-safe)
     content.querySelector('#spot-name').textContent = spot.name;
     content.querySelector('#spot-coordinates').textContent =
-        `(${spot.latitude.toFixed(5)}, ${spot.longitude.toFixed(5)})`;
+        `${spot.latitude.toFixed(5)}, ${spot.longitude.toFixed(5)}`;
 
-    // Fill in each entry's text safely
     const entryDivs = content.querySelectorAll('.spot-entry');
     spotEntries.forEach((entry, idx) => {
         const div = entryDivs[idx];
         if (!div) return;
-        const obsDate = new Date(entry.timestamp || Date.now()).toLocaleString();
-        div.querySelector('.spot-date').textContent = obsDate;
+        div.querySelector('.entry-date').textContent = new Date(entry.timestamp || Date.now()).toLocaleString();
         div.querySelector('.entry-coords').textContent =
-            `(${entry.latitude.toFixed(5)}, ${entry.longitude.toFixed(5)})`;
+            `${entry.latitude.toFixed(5)}, ${entry.longitude.toFixed(5)}`;
         div.querySelector('.entry-desc').textContent = entry.description || 'No notes';
-        div.querySelector('.entry-birds').textContent = entry.birds || 'None listed';
     });
 
     menu.classList.add('open');
+    document.body.classList.add('panel-open');
 
     // "Add More" button — opens the spot form locked to THIS spot (same name +
     // coordinates; the user is appending another observation, not editing identity).
@@ -439,6 +462,7 @@ async function _showSpotDetails(spot) {
                     _showSpotDetails(remaining[0]);
                 } else {
                     menu.classList.remove('open');
+                    document.body.classList.remove('panel-open');
                 }
                 if (_isSpotsCheckboxChecked()) displaySpots();
             } catch (err) {
@@ -633,7 +657,7 @@ export function initSpots() {
     if (useCurrentLocCb) {
         useCurrentLocCb.addEventListener('change', () => {
             const fields = document.getElementById('custom-location-fields');
-            if (fields) fields.style.display = useCurrentLocCb.checked ? 'none' : 'flex';
+            if (fields) fields.style.display = useCurrentLocCb.checked ? 'none' : 'grid';
         });
     }
 
@@ -642,7 +666,7 @@ export function initSpots() {
     if (useCurrentTimeCb) {
         useCurrentTimeCb.addEventListener('change', () => {
             const fields = document.getElementById('custom-time-fields');
-            if (fields) fields.style.display = useCurrentTimeCb.checked ? 'none' : 'flex';
+            if (fields) fields.style.display = useCurrentTimeCb.checked ? 'none' : 'grid';
         });
     }
 
@@ -665,6 +689,7 @@ export function initSpots() {
     if (closeDetails) {
         closeDetails.addEventListener('click', () => {
             document.getElementById('spot-details-menu')?.classList.remove('open');
+            document.body.classList.remove('panel-open');
         });
     }
 
@@ -686,8 +711,17 @@ export function initSpots() {
      * markers to appear even when the "Show" checkbox was unchecked.
      */
     EventBus.on(EVENTS.PROJECT_CHANGED, () => {
+        const pid = getActiveProjectId();
+        const switched = pid !== _lastProjectId;
+        _lastProjectId = pid;
+
         clearSpotsLayer();
-        document.getElementById('spot-details-menu')?.classList.remove('open');
+        // Only close the open details panel on a REAL project switch — a routine
+        // Drive sync also fires PROJECT_CHANGED and must not slam the panel shut.
+        if (switched) {
+            document.getElementById('spot-details-menu')?.classList.remove('open');
+            document.body.classList.remove('panel-open');
+        }
         if (_isSpotsCheckboxChecked()) displaySpots();
     });
 

@@ -27,6 +27,7 @@ import { initProjectUI }      from './ui/ProjectUI.js';
 import { initAnalysis }       from './ui/AnalysisUI.js';
 import { initJobsDashboard }  from './ui/JobsDashboard.js';
 import { initSharingUI }     from './ui/SharingUI.js';
+import { initSyncDiffUI }    from './ui/SyncDiffUI.js';
 
 // ── App Mediator ────────────────────────────────────────────────────────
 import { initApp } from './core/App.js';
@@ -56,6 +57,7 @@ function bootstrap() {
     initAnalysis();
     initJobsDashboard();
     initSharingUI();
+    initSyncDiffUI();
 
     // 6. App mediator — renders auth panel, wires storage/login buttons
     initApp();
