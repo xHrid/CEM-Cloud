@@ -36,6 +36,7 @@
 import EventBus, { EVENTS }          from '../core/EventBus.js';
 import { saveSpot, getLocalFileUrl, deleteSpot, deleteExternalFile } from '../data/Repository.js';
 import { getSpots, getExternalFiles, getActiveProjectId } from '../data/MasterData.js';
+import { revokeObjectUrls } from '../data/StorageAdapter.js';
 import { getMap, getCurrentPosition } from './MapManager.js';
 import { showToast }                 from '../ui/Toast.js';
 import { openModal, closeModal }     from '../ui/ModalManager.js';
@@ -690,6 +691,8 @@ export function initSpots() {
         closeDetails.addEventListener('click', () => {
             document.getElementById('spot-details-menu')?.classList.remove('open');
             document.body.classList.remove('panel-open');
+            // Release the Object URLs this panel created for its images/audio.
+            revokeObjectUrls();
         });
     }
 
@@ -721,6 +724,7 @@ export function initSpots() {
         if (switched) {
             document.getElementById('spot-details-menu')?.classList.remove('open');
             document.body.classList.remove('panel-open');
+            revokeObjectUrls(); // free media URLs from the now-closed details panel
         }
         if (_isSpotsCheckboxChecked()) displaySpots();
     });

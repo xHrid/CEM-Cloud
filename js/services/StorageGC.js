@@ -68,10 +68,14 @@ export async function garbageCollectStorage() {
         if (_isProtected(key)) continue;
         if (refs.has(key))     continue;
 
-        // Preserve job JSON/result artifacts of CURRENT projects — they aren't
-        // all individually tracked on the project record.
+        // Preserve job + system artifacts of CURRENT projects — they aren't all
+        // individually tracked on the project record. `<proj>/system/database/`
+        // holds the BirdNET aggregate (birdnet_results.csv) + processed_*.txt
+        // caches; sweeping them breaks dependency tracking and forces a full
+        // re-process. Orphaned (deleted-project) folders are NOT in `folders`,
+        // so their dead bytes are still reclaimed.
         const topFolder = key.split('/')[0];
-        if (folders.has(topFolder) && key.includes('/jobs/')) continue;
+        if (folders.has(topFolder) && (key.includes('/jobs/') || key.includes('/system/'))) continue;
 
         try {
             if (await StorageAdapter.deleteFile(key)) deleted++;

@@ -30,6 +30,7 @@ import {
 import { showToast } from './Toast.js';
 import { openModal, closeModal } from './ModalManager.js';
 import { getActiveProject } from '../data/MasterData.js';
+import { revokeObjectUrls } from '../data/StorageAdapter.js';
 import { recordCompletedJobs, materializeProjectFiles } from '../services/ProjectFilesSync.js';
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,8 @@ export function initJobsDashboard() {
     document.addEventListener('click', (e) => {
         if (e.target && e.target.id === 'close-jobs-btn') {
             closeModal('jobs-popup');
+            // Release Object URLs created by file previews in this dashboard.
+            revokeObjectUrls();
         }
 
         if (e.target && e.target.id === 'refresh-jobs-btn') {

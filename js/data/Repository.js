@@ -101,13 +101,20 @@ export async function saveSpot(spotData, imageBlob, audioBlob, recordDate) {
     const safeSpot    = _safeName(spotData.name, `Spot_${spotId.substring(0, 8)}`);
     const spotPath    = [projectFolder, 'spots', safeSpot];
 
+    // Per-entry unique suffix. Multiple observations on the SAME spot share the
+    // same display name (the "Add observation" / Add More flow), so the media
+    // filename MUST be keyed on the unique spotId. Otherwise every new entry's
+    // cover/note is written to an identical path, overwriting the previous
+    // entry's file — and all entries end up referencing the single latest image.
+    const shortId     = spotId.substring(0, 8);
+
     let imgPath   = null;
     let audioPath = null;
 
     if (imageBlob) {
         imgPath = await StorageAdapter.saveFile(
             imageBlob,
-            `${safeSpot}_cover.jpg`,
+            `${safeSpot}_${shortId}_cover.jpg`,
             [...spotPath, 'images']
         );
     }
@@ -115,7 +122,7 @@ export async function saveSpot(spotData, imageBlob, audioBlob, recordDate) {
     if (audioBlob) {
         audioPath = await StorageAdapter.saveFile(
             audioBlob,
-            `${safeSpot}_note.webm`,
+            `${safeSpot}_${shortId}_note.webm`,
             [...spotPath, 'audio']
         );
     }
@@ -171,15 +178,23 @@ export async function saveSpot(spotData, imageBlob, audioBlob, recordDate) {
 export async function saveSite(siteName, kmlFile, clusters) {
     const project       = _requireActiveProject();
     const projectFolder = getProjectFolderName(project);
+    const siteId        = crypto.randomUUID();
+
+    // Sanitize the display name AND key the file on the unique siteId, so two
+    // sites that share a name never overwrite each other's KML (same overwrite
+    // class as saveSpot's per-entry media). Raw names also leaked illegal path
+    // chars into the filename — _safeName fixes that too.
+    const safeSite = _safeName(siteName, `Site_${siteId.substring(0, 8)}`);
+    const shortId  = siteId.substring(0, 8);
 
     const kmlPath = await StorageAdapter.saveFile(
         kmlFile,
-        `${siteName}.kml`,
+        `${safeSite}_${shortId}.kml`,
         [projectFolder, 'sites']
     );
 
     const newSite = {
-        id             : crypto.randomUUID(),
+        id             : siteId,
         projectId      : project.id,
         name           : siteName,
         kml_filename   : kmlPath,
