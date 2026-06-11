@@ -44,6 +44,7 @@ import * as StorageAdapter       from '../data/StorageAdapter.js';
 import * as MasterData           from '../data/MasterData.js';
 import { getProjectFolderName }  from '../data/projectUtils.js';
 import { buildJobData }          from './AnalysisService.js';
+import * as ReferenceAccess      from './ReferenceAccess.js';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -304,6 +305,26 @@ export async function runJobOnServer(opts) {
     const isBirdnet = stepId === 'birdnet';
     const localJobId = crypto.randomUUID();
 
+    // Reference-imported files keep NO bytes in the browser (only a disk path),
+    // so in server mode we must read them from disk via a granted folder handle.
+    // Acquire that access now, while the click's user gesture is still live — the
+    // directory picker / permission prompt requires a gesture. We collect inputs
+    // early only to detect whether any references are involved; the user is asked
+    // at most once per session (the handle is then cached + persisted).
+    if (isBirdnet) {
+        const pre = _collectAudioInputs(
+            spotIds, startDate, endDate, currentScript, spots, externalFiles);
+        if (pre.references.length && !ReferenceAccess.hasReferenceAccess()) {
+            const ok = await ReferenceAccess.ensureReferenceAccess({ prompt: true });
+            if (!ok) {
+                throw new Error(
+                    `${pre.references.length} referenced file(s) need disk access. When prompted, ` +
+                    `pick the folder that contains your referenced audio — you'll only be asked ` +
+                    `once — then run again.`);
+            }
+        }
+    }
+
     // Assemble the descriptor (datasets/params) so the record matches a watcher job.
     const jobData = buildJobData(
         jobName, currentScript, spotIds, startDate, endDate,
@@ -343,9 +364,14 @@ export async function runJobOnServer(opts) {
                 throw new Error('No audio files found for the selected spots and dates.');
             }
 
+            // Show the real total up front so the pill isn't misleading when
+            // some inputs are referenced rather than copied.
+            onProgress(`Uploading ${audio.length + references.length} file(s) ` +
+                `(${audio.length} copied, ${references.length} referenced)…`);
+
             // Audio files → one multipart request (kind=audio).
             if (audio.length) {
-                onProgress(`Uploading ${audio.length} audio file(s)…`);
+                onProgress(`Uploading ${audio.length} copied file(s)…`);
                 const fd = new FormData();
                 fd.append('kind', 'audio');
                 for (const a of audio) {
@@ -363,8 +389,12 @@ export async function runJobOnServer(opts) {
             for (let i = 0; i < references.length; i++) {
                 const ref  = references[i];
                 onProgress(`Uploading reference ${i + 1}/${references.length}…`);
-                const blob = await StorageAdapter.getFileBlob(ref.path);
-                if (!blob) throw new Error(`Could not read reference file: ${ref.name}`);
+                // Reference bytes come from the granted folder handle (by
+                // basename), NOT from app storage — getFileBlob can't see them.
+                const blob = await ReferenceAccess.readReferenceBlob(ref.name);
+                if (!blob) throw new Error(
+                    `Could not read reference file "${ref.name}" in the granted folder. ` +
+                    `Make sure you picked the folder that contains your referenced audio.`);
                 const fd = new FormData();
                 fd.append('kind', 'reference');
                 fd.append('spot', ref.spot || '');
