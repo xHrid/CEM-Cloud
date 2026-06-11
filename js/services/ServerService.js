@@ -98,7 +98,13 @@ async function _fetch(url, opts = {}, timeoutMs = 30000) {
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let resp;
     try {
-        resp = await fetch(url, { ...opts, signal: ctrl.signal });
+        // ngrok's free tier serves an HTML browser-warning interstitial (HTTP
+        // 200, no CORS headers) instead of proxying to the server — which the
+        // browser then blocks as "No Access-Control-Allow-Origin". Sending this
+        // header on every request tells ngrok to skip the interstitial and pass
+        // straight through. It is harmless on non-ngrok backends.
+        const headers = { 'ngrok-skip-browser-warning': 'true', ...(opts.headers || {}) };
+        resp = await fetch(url, { ...opts, headers, signal: ctrl.signal });
     } catch (e) {
         if (e.name === 'AbortError') throw new Error(`Request timed out: ${url}`);
         // TypeError here usually means CORS / mixed-content / server unreachable
