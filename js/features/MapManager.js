@@ -290,7 +290,13 @@ function _applyPosition(lat, lng) {
         _locationMarker = L.circleMarker(latlng, {
             radius: 8, color: '#ffffff', fillColor: '#2196F3', fillOpacity: 1, weight: 2,
             pane: 'userLocation',   // always render above spots/routes
-        }).addTo(_map).bindPopup('You are here');
+            // Non-interactive: the marker still renders ON TOP (pane z-index 650)
+            // but no longer swallows taps. Without this, a spot/route sitting
+            // under the blue dot was impossible to tap — the location marker ate
+            // the click. interactive:false drops the leaflet-interactive class so
+            // pointer events fall through to the layers below.
+            interactive: false,
+        }).addTo(_map);
     } else {
         _locationMarker.setLatLng(latlng);
     }

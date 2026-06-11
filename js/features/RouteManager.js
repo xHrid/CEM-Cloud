@@ -52,6 +52,19 @@ let _routePolyline = null;
 /** @type {boolean} */
 let _isTracking = false;
 
+/**
+ * Annotations the user pins WHILE recording, before the route has an id. Each is
+ * { latitude, longitude, description, imageFile, audioBlob }. Flushed onto the
+ * real route (via saveRouteAnnotation) the moment the route is saved.
+ * @type {Array<object>}
+ */
+let _pendingAnnotations = [];
+/** @type {L.LayerGroup|null} shows the pending pins on the map during recording. */
+let _liveAnnoLayer = null;
+
+/** Sentinel routeId used by the annotation form while a route is still recording. */
+const LIVE_ROUTE_ID = '__live__';
+
 // ---------------------------------------------------------------------------
 // Module-private state — display + annotation
 // ---------------------------------------------------------------------------
@@ -92,7 +105,22 @@ function _handleTrackingToggle(btn) {
         _routePoints = [];
         const map = getMap();
         if (_routePolyline) map.removeLayer(_routePolyline);
-        _routePolyline = L.polyline([], { color: 'blue' }).addTo(map);
+        _routePolyline = L.polyline([], { color: 'blue', weight: 4 }).addTo(map);
+
+        // Let the user pin observations onto the route AS THEY WALK — same form
+        // as a saved route, just buffered until the route gets an id on save.
+        _routePolyline.on('click', (e) => {
+            if (!_isTracking) return;
+            L.DomEvent.stopPropagation(e);
+            _beginAnnotation(LIVE_ROUTE_ID, e.latlng.lat, e.latlng.lng);
+        });
+
+        // Fresh recording session — drop any pins left over from an abandoned one.
+        _pendingAnnotations = [];
+        if (_liveAnnoLayer) map.removeLayer(_liveAnnoLayer);
+        _liveAnnoLayer = L.layerGroup().addTo(map);
+
+        showToast('Recording — tap the blue line to pin a photo or note.', 'success');
 
         btn.textContent      = 'Stop & Save';
         btn.style.background  = 'red';
@@ -117,8 +145,31 @@ async function _handleRouteFormSubmit(e) {
     }
 
     try {
-        await saveRoute({ name, points: _dedupePoints(_routePoints) });
+        const newRoute = await saveRoute({ name, points: _dedupePoints(_routePoints) });
         showToast('Route saved locally.', 'success');
+
+        // Flush any observations the user pinned while walking onto the new route.
+        if (_pendingAnnotations.length) {
+            let failed = 0;
+            for (const a of _pendingAnnotations) {
+                try {
+                    await saveRouteAnnotation(
+                        newRoute.id,
+                        { latitude: a.latitude, longitude: a.longitude, description: a.description },
+                        a.imageFile,
+                        a.audioBlob
+                    );
+                } catch (annErr) {
+                    failed++;
+                    console.error('[RouteManager] pending annotation failed:', annErr);
+                }
+            }
+            const saved = _pendingAnnotations.length - failed;
+            if (saved) showToast(`Attached ${saved} pinned observation${saved > 1 ? 's' : ''}.`, 'success');
+            if (failed) showToast(`${failed} pinned observation${failed > 1 ? 's' : ''} could not be saved.`, 'failed');
+        }
+        _pendingAnnotations = [];
+        if (_liveAnnoLayer) { getMap().removeLayer(_liveAnnoLayer); _liveAnnoLayer = null; }
 
         closeModal('save-route-dialog');
         _routePoints = [];
@@ -329,15 +380,32 @@ async function _handleAnnotationSubmit(e) {
         if (imageFile) imageFile = await downscaleImage(imageFile);
 
         const desc = document.getElementById('route-ann-desc')?.value || '';
+        const { routeId, lat, lng } = _annotationTarget;
 
-        await saveRouteAnnotation(
-            _annotationTarget.routeId,
-            { latitude: _annotationTarget.lat, longitude: _annotationTarget.lng, description: desc },
-            imageFile,
-            _recordedAudioBlob
-        );
+        if (routeId === LIVE_ROUTE_ID) {
+            // Route not saved yet — buffer the observation and pin it on the map.
+            // It gets persisted onto the real route in _handleRouteFormSubmit.
+            _pendingAnnotations.push({
+                latitude: lat, longitude: lng, description: desc,
+                imageFile, audioBlob: _recordedAudioBlob,
+            });
+            if (_liveAnnoLayer) {
+                L.circleMarker([lat, lng], {
+                    color: '#000', fillColor: ANNOTATION_COLOR, fillOpacity: 0.9, radius: 7, weight: 1,
+                }).addTo(_liveAnnoLayer)
+                  .bindTooltip(desc ? desc.slice(0, 40) : 'Observation', { direction: 'top' });
+            }
+            showToast('Pinned — saves with the route when you stop.', 'success');
+        } else {
+            await saveRouteAnnotation(
+                routeId,
+                { latitude: lat, longitude: lng, description: desc },
+                imageFile,
+                _recordedAudioBlob
+            );
+            showToast('Added to route.', 'success');
+        }
 
-        showToast('Added to route.', 'success');
         _resetAnnotationAudio();
         _clearDraftMarker();
         _closeRoutePanel();

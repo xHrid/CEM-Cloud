@@ -34,7 +34,7 @@
  */
 
 import EventBus, { EVENTS }          from '../core/EventBus.js';
-import { saveSpot, getLocalFileUrl, deleteSpot, deleteExternalFile } from '../data/Repository.js';
+import { saveSpot, updateSpot, getLocalFileUrl, deleteSpot, deleteExternalFile } from '../data/Repository.js';
 import { getSpots, getExternalFiles, getActiveProjectId } from '../data/MasterData.js';
 import { revokeObjectUrls } from '../data/StorageAdapter.js';
 import { getMap, getCurrentPosition } from './MapManager.js';
@@ -389,6 +389,7 @@ async function _showSpotDetails(spot) {
     spotEntries.forEach((entry, idx) => {
         html += `
             <div class="spot-entry">
+                <button class="edit-spot-entry-btn" data-spot-id="${entry.spotId}" title="Edit this observation">✏️</button>
                 <button class="delete-spot-entry-btn" data-spot-id="${entry.spotId}" title="Delete this observation">🗑</button>
                 <span class="entry-index">Entry ${idx + 1}</span>
                 <span class="entry-date"></span>
@@ -472,6 +473,15 @@ async function _showSpotDetails(spot) {
         });
     });
 
+    // Edit buttons for each entry — swap the card into an inline editor.
+    content.querySelectorAll('.edit-spot-entry-btn').forEach((btn, idx) => {
+        btn.addEventListener('click', () => {
+            const entry = spotEntries[idx];
+            const div   = entryDivs[idx];
+            if (entry && div) _beginEntryEdit(spot, entry, div);
+        });
+    });
+
     // Async media loads for each entry
     for (let idx = 0; idx < spotEntries.length; idx++) {
         const entry = spotEntries[idx];
@@ -515,6 +525,92 @@ async function _showSpotDetails(spot) {
             }
         }
     }
+}
+
+/**
+ * Replace one entry card with an inline editor for its notes + photo.
+ *
+ * Scope is deliberately narrow: notes and the photo only. Name, coordinates and
+ * the observation date stay fixed (that's identity, not "details"). Cancel — or
+ * closing without saving — re-renders the panel from stored data, so nothing
+ * changes unless the user explicitly hits Save.
+ *
+ * @param {object}      spot   The spot whose panel is open (for re-render).
+ * @param {object}      entry  The specific temporal entry being edited.
+ * @param {HTMLElement} div    The .spot-entry card element to take over.
+ */
+async function _beginEntryEdit(spot, entry, div) {
+    // Resolve current photo (local first, public Drive fallback) for preview.
+    let currentImgSrc = null;
+    if (entry.image_local_filename) {
+        currentImgSrc = await getLocalFileUrl(entry.image_local_filename);
+    }
+    if (!currentImgSrc && entry.image_drive_id) {
+        currentImgSrc = _drivePublicUrl(entry.image_drive_id, 'image');
+    }
+
+    div.innerHTML = `
+        <span class="entry-index">Editing entry</span>
+        <div class="entry-field">
+            <span class="k">Notes</span>
+            <textarea class="edit-desc" style="width:100%; min-height:80px; box-sizing:border-box; margin-top:4px;"></textarea>
+        </div>
+        <div class="entry-field">
+            <span class="k">Photo</span>
+            <div class="edit-img-preview" style="margin-top:6px;">
+                ${currentImgSrc
+                    ? `<img src="${currentImgSrc}" referrerpolicy="no-referrer" style="max-width:100%; border-radius:8px;">`
+                    : `<span style="font-size:0.82rem; color:var(--text-muted);">No photo yet</span>`}
+            </div>
+            <label class="custom-upload" style="cursor:pointer; display:inline-block; margin-top:8px;">
+                <span>📷 Replace photo</span>
+                <input type="file" class="edit-img-input" accept="image/*" capture="environment" style="display:none;">
+            </label>
+            <div class="edit-img-name" style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;"></div>
+        </div>
+        <div class="button-group" style="display:flex; gap:8px; margin-top:12px;">
+            <button type="button" class="popup-btn edit-save-btn" style="background:var(--forest,#2e7d32); color:#fff;">Save</button>
+            <button type="button" class="popup-btn cancel-btn edit-cancel-btn">Cancel</button>
+        </div>
+    `;
+
+    // textContent (not innerHTML) so notes can't inject markup.
+    div.querySelector('.edit-desc').value = entry.description || '';
+
+    const imgInput = div.querySelector('.edit-img-input');
+    imgInput.addEventListener('change', () => {
+        const f = imgInput.files[0];
+        const el = div.querySelector('.edit-img-name');
+        if (el) el.textContent = f ? `New photo: ${f.name}` : '';
+    });
+
+    // Cancel → clean revert (re-render from stored data, no writes).
+    div.querySelector('.edit-cancel-btn').addEventListener('click', () => {
+        _showSpotDetails(spot);
+    });
+
+    // Save → persist notes + optional new photo, then re-render.
+    div.querySelector('.edit-save-btn').addEventListener('click', async (e) => {
+        const saveBtn = e.currentTarget;
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        try {
+            const desc = div.querySelector('.edit-desc').value;
+            let blob = imgInput.files[0] || null;
+            if (blob) blob = await downscaleImage(blob);
+
+            await updateSpot(entry.spotId, { description: desc }, blob);
+            showToast('Observation updated.', 'success');
+
+            _showSpotDetails(spot);            // rebuild panel with fresh data
+            if (_isSpotsCheckboxChecked()) displaySpots();
+        } catch (err) {
+            console.error('[SpotManager] updateSpot failed:', err);
+            showToast(`Update failed: ${err.message}`, 'failed');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save';
+        }
+    });
 }
 
 /**

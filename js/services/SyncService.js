@@ -848,14 +848,24 @@ export function mergeDatasets(local, remote) {
      * @param {object[]} arr2
      * @returns {object[]}
      */
+    // Version of an item for last-write-wins: the later of `timestamp` (creation
+    // / observation time) and `updated_at` (stamped on in-place edits). Using the
+    // max lets an edited record win WITHOUT changing its displayed observation
+    // date. Records that were never edited have no updated_at and fall back to
+    // timestamp, so existing behaviour is unchanged.
+    const _ver = (it) => Math.max(
+        new Date(it?.timestamp  || 0).getTime(),
+        new Date(it?.updated_at || 0).getTime(),
+    );
+
     function _mergeArray(arr1 = [], arr2 = []) {
         const map = new Map();
         [...arr1, ...arr2].forEach(item => {
             const id = item.spotId || item.id;
             if (!id) return;
             const existing     = map.get(id);
-            const newTime      = new Date(item.timestamp      || 0).getTime();
-            const existingTime = new Date(existing?.timestamp || 0).getTime();
+            const newTime      = _ver(item);
+            const existingTime = existing ? _ver(existing) : -1;
             if (!existing || newTime > existingTime) map.set(id, item);
         });
         return Array.from(map.values());

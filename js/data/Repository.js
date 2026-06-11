@@ -160,6 +160,64 @@ export async function saveSpot(spotData, imageBlob, audioBlob, recordDate) {
     return newSpot;
 }
 
+/**
+ * Edit an EXISTING spot entry in place (notes and/or photo).
+ *
+ * Unlike saveSpot (which always appends a new temporal entry), this mutates the
+ * one record identified by spotId. Identity fields — name, coordinates, the
+ * observation `timestamp` — are intentionally left untouched; this is "fix the
+ * details of this observation", not "move/rename/re-date it".
+ *
+ * Sync: we stamp `updated_at` (a version marker distinct from the display
+ * `timestamp`) so the edit wins last-write-wins merges WITHOUT corrupting the
+ * observation date shown to the user. See SyncService._mergeArray.
+ *
+ * @param {string}      spotId     UUID of the entry to edit.
+ * @param {object}      fields     Partial fields to overwrite, e.g. { description }.
+ * @param {Blob|null}   imageBlob  Optional NEW photo; replaces the existing one.
+ * @returns {Promise<object>}      The updated spot record.
+ */
+export async function updateSpot(spotId, fields, imageBlob) {
+    const project = _requireActiveProject();
+    const spot    = (project.spots || []).find(s => s.spotId === spotId);
+    if (!spot) throw new Error(`Spot "${spotId}" not found.`);
+
+    // Whitelist editable fields — never touch name / lat / lng / timestamp here.
+    if (fields && typeof fields.description === 'string') {
+        spot.description = fields.description;
+    }
+
+    let newImgPath = null;
+    if (imageBlob) {
+        const projectFolder = getProjectFolderName(project);
+        const safeSpot      = _safeName(spot.name, `Spot_${spotId.substring(0, 8)}`);
+        const shortId       = spotId.substring(0, 8);
+        // Deterministic per-entry cover path → overwrites this entry's old photo
+        // in place (no orphan), and re-syncs under the same relative path.
+        newImgPath = await StorageAdapter.saveFile(
+            imageBlob,
+            `${safeSpot}_${shortId}_cover.jpg`,
+            [projectFolder, 'spots', safeSpot, 'images']
+        );
+        spot.image_local_filename = newImgPath;
+        // A fresh local photo supersedes any inherited Drive copy.
+        spot.image_drive_id = null;
+    }
+
+    // Version marker for last-write-wins merge (kept separate from `timestamp`,
+    // which remains the observation date shown in the UI).
+    spot.updated_at = new Date().toISOString();
+
+    await MasterData.saveMasterData();
+    EventBus.emit(EVENTS.DATA_UPDATED);
+
+    if (newImgPath) {
+        EventBus.emit(EVENTS.MEDIA_SAVED, { projectId: project.id, relPath: newImgPath, isExternal: false });
+    }
+
+    return spot;
+}
+
 // ---------------------------------------------------------------------------
 // Site
 // ---------------------------------------------------------------------------

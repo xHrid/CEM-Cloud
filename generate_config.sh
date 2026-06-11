@@ -2,16 +2,32 @@
 #
 # generate_config.sh — build-time generator for js/core/Config.js
 #
-# js/core/Config.js is gitignored (holds the OAuth client id + keys), so it is
-# NOT in the repo. Render runs this script at build time to recreate it from
-# Environment Variables. The output MUST match the schema the app imports:
+# js/core/Config.js is gitignored (holds the OAuth client id + keys + the lab
+# server URL/key), so it is NOT in the repo. Render runs this script at build
+# time to recreate it from Environment Variables. The output MUST match the
+# schema the app imports:
 #   import Config from '../core/Config.js';   // default export, nested objects
 #
-# Required Render env vars:
-#   GOOGLE_CLIENT_ID   — OAuth 2.0 client ID (…apps.googleusercontent.com)
-# Optional:
-#   PICKER_API_KEY     — Browser API key with the Picker API enabled
-#                        (needed only for importing shared folders)
+# Render env vars
+# ---------------
+# Required:
+#   GOOGLE_CLIENT_ID   OAuth 2.0 client ID (…apps.googleusercontent.com)
+#
+# Optional (Google Picker — only needed for importing shared folders):
+#   PICKER_API_KEY     Browser API key with the Picker API enabled
+#
+# Optional ("Connect to Server" compute mode — the Dockerised FastAPI):
+#   SERVER_BASE_URL    Origin of the lab API, NO trailing slash, HTTPS when the
+#                      site is served over HTTPS (e.g. an ngrok/cloudflared
+#                      tunnel or reverse proxy in front of the docker).
+#                      e.g. https://abc123.ngrok-free.app
+#   SERVER_API_KEY     Sent in the X-API-Key header; MUST equal the docker's
+#                      API_KEY env var. NOTE: this is a static site, so this
+#                      value ships in plaintext to every visitor — only use a
+#                      key you are comfortable exposing.
+#
+# Optional (override the analysis script repo; defaults to the main repo):
+#   ANALYSIS_REPO_URL  Raw GitHub content URL, no trailing slash.
 #
 # appId (Cloud project number) is derived from the client ID's leading segment.
 
@@ -19,6 +35,12 @@ set -e
 
 # Derive the Cloud project number from the client ID ("1234-abc...." -> "1234").
 APP_ID="${GOOGLE_CLIENT_ID%%-*}"
+
+# Default the analysis repo if not provided.
+ANALYSIS_REPO_URL="${ANALYSIS_REPO_URL:-https://raw.githubusercontent.com/xHrid/cem-scripts-new/refs/heads/main}"
+
+# Strip any trailing slash the user may have added to the server URL.
+SERVER_BASE_URL="${SERVER_BASE_URL%/}"
 
 # Write to the path the code actually imports: js/core/Config.js
 cat <<EOF > js/core/Config.js
@@ -53,7 +75,11 @@ const Config = deepFreeze({
         installingMaxAge: 600,
     },
     analysis: {
-        githubRepoUrl: 'https://raw.githubusercontent.com/xHrid/cem-scripts-new/refs/heads/main',
+        githubRepoUrl: '${ANALYSIS_REPO_URL}',
+    },
+    server: {
+        baseUrl: '${SERVER_BASE_URL}',
+        apiKey:  '${SERVER_API_KEY}',
     },
     ui: {
         toastDuration: 3000,
@@ -70,3 +96,7 @@ export default Config;
 EOF
 
 echo "Configuration file generated successfully at js/core/Config.js"
+echo "  google.clientId    : ${GOOGLE_CLIENT_ID:-(unset!)}"
+echo "  google.pickerApiKey: ${PICKER_API_KEY:+set}"
+echo "  server.baseUrl     : ${SERVER_BASE_URL:-(unset — server mode disabled)}"
+echo "  server.apiKey      : ${SERVER_API_KEY:+set}"

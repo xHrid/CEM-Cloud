@@ -508,6 +508,10 @@ audio { width: 100%; display: block; }
     position: absolute; top: 8px; right: 8px; background: none; border: none;
     color: var(--rust); cursor: pointer; font-size: 1rem; padding: 2px 5px;
 }
+.spot-entry .edit-spot-entry-btn {
+    position: absolute; top: 8px; right: 38px; background: none; border: none;
+    cursor: pointer; font-size: 1rem; padding: 2px 5px; line-height: 1;
+}
 
 .show-external-data-btn { width: 100%; margin-top: 12px; background-color: var(--sky); color: var(--on-accent); }
 
