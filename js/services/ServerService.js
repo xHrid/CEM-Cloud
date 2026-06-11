@@ -44,7 +44,6 @@ import * as StorageAdapter       from '../data/StorageAdapter.js';
 import * as MasterData           from '../data/MasterData.js';
 import { getProjectFolderName }  from '../data/projectUtils.js';
 import { buildJobData }          from './AnalysisService.js';
-import * as ReferenceAccess      from './ReferenceAccess.js';
 
 // ---------------------------------------------------------------------------
 // Config helpers
@@ -305,26 +304,6 @@ export async function runJobOnServer(opts) {
     const isBirdnet = stepId === 'birdnet';
     const localJobId = crypto.randomUUID();
 
-    // Reference-imported files keep NO bytes in the browser (only a disk path),
-    // so in server mode we must read them from disk via a granted folder handle.
-    // Acquire that access now, while the click's user gesture is still live — the
-    // directory picker / permission prompt requires a gesture. We collect inputs
-    // early only to detect whether any references are involved; the user is asked
-    // at most once per session (the handle is then cached + persisted).
-    if (isBirdnet) {
-        const pre = _collectAudioInputs(
-            spotIds, startDate, endDate, currentScript, spots, externalFiles);
-        if (pre.references.length && !ReferenceAccess.hasReferenceAccess()) {
-            const ok = await ReferenceAccess.ensureReferenceAccess({ prompt: true });
-            if (!ok) {
-                throw new Error(
-                    `${pre.references.length} referenced file(s) need disk access. When prompted, ` +
-                    `pick the folder that contains your referenced audio — you'll only be asked ` +
-                    `once — then run again.`);
-            }
-        }
-    }
-
     // Assemble the descriptor (datasets/params) so the record matches a watcher job.
     const jobData = buildJobData(
         jobName, currentScript, spotIds, startDate, endDate,
@@ -360,50 +339,43 @@ export async function runJobOnServer(opts) {
             const { audio, references } = _collectAudioInputs(
                 spotIds, startDate, endDate, currentScript, spots, externalFiles);
 
-            if (audio.length === 0 && references.length === 0) {
-                throw new Error('No audio files found for the selected spots and dates.');
+            // Server mode = COPIED files only. Reference imports keep no bytes in
+            // the browser (only a disk path the sandbox can't read), so they can't
+            // be uploaded. Skip them with a clear warning; the user should
+            // re-import those as copies to analyse them on the server. (Local
+            // watcher mode still handles references — it reads them off disk.)
+            if (references.length) {
+                const names = references.map(r => r.name).join(', ');
+                console.warn(
+                    `[ServerService] Skipping ${references.length} referenced file(s) — ` +
+                    `server mode supports copied imports only. Re-import as copies to ` +
+                    `analyse on the server: ${names}`);
+                onProgress(
+                    `Note: skipping ${references.length} referenced file(s) — ` +
+                    `server mode supports copied imports only. Re-import them as copies.`);
             }
 
-            // Show the real total up front so the pill isn't misleading when
-            // some inputs are referenced rather than copied.
-            onProgress(`Uploading ${audio.length + references.length} file(s) ` +
-                `(${audio.length} copied, ${references.length} referenced)…`);
-
-            // Audio files → one multipart request (kind=audio).
-            if (audio.length) {
-                onProgress(`Uploading ${audio.length} copied file(s)…`);
-                const fd = new FormData();
-                fd.append('kind', 'audio');
-                for (const a of audio) {
-                    const blob = await StorageAdapter.getFileBlob(a.path);
-                    if (!blob) throw new Error(`Could not read local file: ${a.name}`);
-                    fd.append('files', blob, a.name);
-                    processedNames.push(a.name);
-                }
-                await _fetch(_url(`/jobs/${serverJobId}/upload`),
-                    { method: 'POST', headers: _authHeaders(), body: fd },
-                    20 * 60 * 1000);
+            if (audio.length === 0) {
+                throw new Error(
+                    references.length
+                        ? 'All matching files were imported by reference, which the server ' +
+                          'cannot analyse. Re-import them as copies and try again.'
+                        : 'No audio files found for the selected spots and dates.');
             }
 
-            // Reference files → one request each (each carries its own spot).
-            for (let i = 0; i < references.length; i++) {
-                const ref  = references[i];
-                onProgress(`Uploading reference ${i + 1}/${references.length}…`);
-                // Reference bytes come from the granted folder handle (by
-                // basename), NOT from app storage — getFileBlob can't see them.
-                const blob = await ReferenceAccess.readReferenceBlob(ref.name);
-                if (!blob) throw new Error(
-                    `Could not read reference file "${ref.name}" in the granted folder. ` +
-                    `Make sure you picked the folder that contains your referenced audio.`);
-                const fd = new FormData();
-                fd.append('kind', 'reference');
-                fd.append('spot', ref.spot || '');
-                fd.append('files', blob, ref.name);
-                await _fetch(_url(`/jobs/${serverJobId}/upload`),
-                    { method: 'POST', headers: _authHeaders(), body: fd },
-                    20 * 60 * 1000);
-                processedNames.push(ref.name);
+            // Copied audio files → one multipart request (kind=audio).
+            onProgress(`Uploading ${audio.length} file(s)…`);
+            const fd = new FormData();
+            fd.append('kind', 'audio');
+            for (const a of audio) {
+                const blob = await StorageAdapter.getFileBlob(a.path);
+                if (!blob) throw new Error(`Could not read local file: ${a.name}`);
+                fd.append('files', blob, a.name);
+                processedNames.push(a.name);
             }
+            await _fetch(_url(`/jobs/${serverJobId}/upload`),
+                { method: 'POST', headers: _authHeaders(), body: fd },
+                20 * 60 * 1000);
         } else {
             // Analysis step: ship the locally-cached BirdNET aggregate so the
             // stateless server has the detections to analyse.

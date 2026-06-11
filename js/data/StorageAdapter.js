@@ -447,47 +447,6 @@ export async function checkFileExists(relativePath) {
     return blob !== undefined && blob !== null;
 }
 
-// ---------------------------------------------------------------------------
-// Persistent handle storage (FileSystemDirectoryHandle / FileSystemFileHandle)
-// ---------------------------------------------------------------------------
-//
-// File System Access handles are structured-cloneable, so they can be stored in
-// IndexedDB and re-used across sessions (subject to a permission re-prompt).
-// Used by ReferenceAccess.js to remember the folder holding reference-imported
-// audio, so the user grants it only once. Keys are namespaced to avoid clashing
-// with the relative file paths used as keys elsewhere in this store.
-
-const _HANDLE_PREFIX = '::handle::';
-
-/**
- * Persist a File System Access handle under a logical key. Best-effort.
- * @param {string} key
- * @param {FileSystemHandle} handle
- * @returns {Promise<boolean>} true on success.
- */
-export async function savePersistentHandle(key, handle) {
-    try {
-        await _idbSave(_HANDLE_PREFIX + key, handle);
-        return true;
-    } catch (e) {
-        console.warn('[StorageAdapter] savePersistentHandle failed:', e?.message);
-        return false;
-    }
-}
-
-/**
- * Load a previously persisted handle, or null if none / unreadable.
- * @param {string} key
- * @returns {Promise<FileSystemHandle|null>}
- */
-export async function loadPersistentHandle(key) {
-    try {
-        return (await _idbGet(_HANDLE_PREFIX + key)) ?? null;
-    } catch {
-        return null;
-    }
-}
-
 /**
  * List the file names (not subdirectory names) directly inside a given folder.
  *
